@@ -34,25 +34,26 @@ impl Connection {
         C::Future: Unpin + Send,
         C::Response: AsyncRead + AsyncWrite + HyperConnection + Unpin + Send + 'static,
     {
-        let mut settings = Builder::new()
+        // TODO: HTTP/3
+        let settings = Builder::new()
             .http2_initial_stream_window_size(endpoint.init_stream_window_size)
             .http2_initial_connection_window_size(endpoint.init_connection_window_size)
             .http2_only(true)
-            .http2_keep_alive_interval(endpoint.http2_keep_alive_interval)
+            // .http2_keep_alive_interval(endpoint.http2_keep_alive_interval)
             .executor(endpoint.executor.clone())
             .clone();
 
-        if let Some(val) = endpoint.http2_keep_alive_timeout {
-            settings.http2_keep_alive_timeout(val);
-        }
+        // if let Some(val) = endpoint.http2_keep_alive_timeout {
+        //     settings.http2_keep_alive_timeout(val);
+        // }
 
-        if let Some(val) = endpoint.http2_keep_alive_while_idle {
-            settings.http2_keep_alive_while_idle(val);
-        }
+        // if let Some(val) = endpoint.http2_keep_alive_while_idle {
+        //     settings.http2_keep_alive_while_idle(val);
+        // }
 
-        if let Some(val) = endpoint.http2_adaptive_window {
-            settings.http2_adaptive_window(val);
-        }
+        // if let Some(val) = endpoint.http2_adaptive_window {
+        //     settings.http2_adaptive_window(val);
+        // }
 
         let stack = ServiceBuilder::new()
             .layer_fn(|s| {

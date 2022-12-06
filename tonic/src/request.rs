@@ -195,7 +195,6 @@ impl<T> Request<T> {
         F: FnOnce(T) -> U,
     {
         let message = f(self.message);
-
         Request {
             metadata: self.metadata,
             message,
@@ -214,7 +213,7 @@ impl<T> Request<T> {
             #[cfg(feature = "tls")]
             {
                 self.extensions()
-                    .get::<TcpConnectInfo>()
+                    .get::<TcpConnectInfo>() // TODO: QuicConnectInfo
                     .and_then(|i| i.remote_addr())
                     .or_else(|| {
                         self.extensions()

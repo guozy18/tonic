@@ -78,7 +78,7 @@ impl<T> Response<T> {
     pub(crate) fn into_http(self) -> http::Response<T> {
         let mut res = http::Response::new(self.message);
 
-        *res.version_mut() = http::Version::HTTP_2;
+        *res.version_mut() = http::Version::HTTP_3;
         *res.headers_mut() = self.metadata.into_sanitized_headers();
         *res.extensions_mut() = self.extensions.into_http();
 

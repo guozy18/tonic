@@ -20,7 +20,7 @@ use tower::make::MakeConnection;
 
 /// Channel builder.
 ///
-/// This struct is used to build and configure HTTP/2 channels.
+/// This struct is used to build and configure HTTP/3 channels.
 #[derive(Clone)]
 pub struct Endpoint {
     pub(crate) uri: Uri,
@@ -34,13 +34,13 @@ pub struct Endpoint {
     pub(crate) buffer_size: Option<usize>,
     pub(crate) init_stream_window_size: Option<u32>,
     pub(crate) init_connection_window_size: Option<u32>,
-    pub(crate) tcp_keepalive: Option<Duration>,
-    pub(crate) tcp_nodelay: bool,
-    pub(crate) http2_keep_alive_interval: Option<Duration>,
-    pub(crate) http2_keep_alive_timeout: Option<Duration>,
-    pub(crate) http2_keep_alive_while_idle: Option<bool>,
+    // pub(crate) tcp_keepalive: Option<Duration>,
+    // pub(crate) tcp_nodelay: bool,
+    // pub(crate) http2_keep_alive_interval: Option<Duration>,
+    // pub(crate) http2_keep_alive_timeout: Option<Duration>,
+    // pub(crate) http2_keep_alive_while_idle: Option<bool>,
     pub(crate) connect_timeout: Option<Duration>,
-    pub(crate) http2_adaptive_window: Option<bool>,
+    // pub(crate) http2_adaptive_window: Option<bool>,
     pub(crate) executor: SharedExec,
 }
 
@@ -166,20 +166,20 @@ impl Endpoint {
         }
     }
 
-    /// Set whether TCP keepalive messages are enabled on accepted connections.
-    ///
-    /// If `None` is specified, keepalive is disabled, otherwise the duration
-    /// specified will be the time to remain idle before sending TCP keepalive
-    /// probes.
-    ///
-    /// Default is no keepalive (`None`)
-    ///
-    pub fn tcp_keepalive(self, tcp_keepalive: Option<Duration>) -> Self {
-        Endpoint {
-            tcp_keepalive,
-            ..self
-        }
-    }
+    // /// Set whether TCP keepalive messages are enabled on accepted connections.
+    // ///
+    // /// If `None` is specified, keepalive is disabled, otherwise the duration
+    // /// specified will be the time to remain idle before sending TCP keepalive
+    // /// probes.
+    // ///
+    // /// Default is no keepalive (`None`)
+    // ///
+    // pub fn tcp_keepalive(self, tcp_keepalive: Option<Duration>) -> Self {
+    //     Endpoint {
+    //         tcp_keepalive,
+    //         ..self
+    //     }
+    // }
 
     /// Apply a concurrency limit to each request.
     ///
@@ -247,45 +247,45 @@ impl Endpoint {
         })
     }
 
-    /// Set the value of `TCP_NODELAY` option for accepted connections. Enabled by default.
-    pub fn tcp_nodelay(self, enabled: bool) -> Self {
-        Endpoint {
-            tcp_nodelay: enabled,
-            ..self
-        }
-    }
+    // /// Set the value of `TCP_NODELAY` option for accepted connections. Enabled by default.
+    // pub fn tcp_nodelay(self, enabled: bool) -> Self {
+    //     Endpoint {
+    //         tcp_nodelay: enabled,
+    //         ..self
+    //     }
+    // }
 
-    /// Set http2 KEEP_ALIVE_INTERVAL. Uses `hyper`'s default otherwise.
-    pub fn http2_keep_alive_interval(self, interval: Duration) -> Self {
-        Endpoint {
-            http2_keep_alive_interval: Some(interval),
-            ..self
-        }
-    }
+    // /// Set http2 KEEP_ALIVE_INTERVAL. Uses `hyper`'s default otherwise.
+    // pub fn http2_keep_alive_interval(self, interval: Duration) -> Self {
+    //     Endpoint {
+    //         http2_keep_alive_interval: Some(interval),
+    //         ..self
+    //     }
+    // }
 
-    /// Set http2 KEEP_ALIVE_TIMEOUT. Uses `hyper`'s default otherwise.
-    pub fn keep_alive_timeout(self, duration: Duration) -> Self {
-        Endpoint {
-            http2_keep_alive_timeout: Some(duration),
-            ..self
-        }
-    }
+    // /// Set http2 KEEP_ALIVE_TIMEOUT. Uses `hyper`'s default otherwise.
+    // pub fn keep_alive_timeout(self, duration: Duration) -> Self {
+    //     Endpoint {
+    //         http2_keep_alive_timeout: Some(duration),
+    //         ..self
+    //     }
+    // }
 
-    /// Set http2 KEEP_ALIVE_WHILE_IDLE. Uses `hyper`'s default otherwise.
-    pub fn keep_alive_while_idle(self, enabled: bool) -> Self {
-        Endpoint {
-            http2_keep_alive_while_idle: Some(enabled),
-            ..self
-        }
-    }
+    // /// Set http2 KEEP_ALIVE_WHILE_IDLE. Uses `hyper`'s default otherwise.
+    // pub fn keep_alive_while_idle(self, enabled: bool) -> Self {
+    //     Endpoint {
+    //         http2_keep_alive_while_idle: Some(enabled),
+    //         ..self
+    //     }
+    // }
 
-    /// Sets whether to use an adaptive flow control. Uses `hyper`'s default otherwise.
-    pub fn http2_adaptive_window(self, enabled: bool) -> Self {
-        Endpoint {
-            http2_adaptive_window: Some(enabled),
-            ..self
-        }
-    }
+    // /// Sets whether to use an adaptive flow control. Uses `hyper`'s default otherwise.
+    // pub fn http2_adaptive_window(self, enabled: bool) -> Self {
+    //     Endpoint {
+    //         http2_adaptive_window: Some(enabled),
+    //         ..self
+    //     }
+    // }
 
     /// Sets the executor used to spawn async tasks.
     ///
@@ -301,9 +301,10 @@ impl Endpoint {
     /// Create a channel from this config.
     pub async fn connect(&self) -> Result<Channel, Error> {
         let mut http = hyper::client::connect::HttpConnector::new();
+        // TODO: QUIC config
         http.enforce_http(false);
-        http.set_nodelay(self.tcp_nodelay);
-        http.set_keepalive(self.tcp_keepalive);
+        // http.set_nodelay(self.tcp_nodelay);
+        // http.set_keepalive(self.tcp_keepalive);
 
         #[cfg(feature = "tls")]
         let connector = service::connector(http, self.tls.clone());
@@ -327,8 +328,9 @@ impl Endpoint {
     pub fn connect_lazy(&self) -> Channel {
         let mut http = hyper::client::connect::HttpConnector::new();
         http.enforce_http(false);
-        http.set_nodelay(self.tcp_nodelay);
-        http.set_keepalive(self.tcp_keepalive);
+        // TODO: QUIC config
+        // http.set_nodelay(self.tcp_nodelay);
+        // http.set_keepalive(self.tcp_keepalive);
 
         #[cfg(feature = "tls")]
         let connector = service::connector(http, self.tls.clone());
@@ -425,13 +427,13 @@ impl From<Uri> for Endpoint {
             buffer_size: None,
             init_stream_window_size: None,
             init_connection_window_size: None,
-            tcp_keepalive: None,
-            tcp_nodelay: true,
-            http2_keep_alive_interval: None,
-            http2_keep_alive_timeout: None,
-            http2_keep_alive_while_idle: None,
+            // tcp_keepalive: None,
+            // tcp_nodelay: true,
+            // http2_keep_alive_interval: None,
+            // http2_keep_alive_timeout: None,
+            // http2_keep_alive_while_idle: None,
             connect_timeout: None,
-            http2_adaptive_window: None,
+            // http2_adaptive_window: None,
             executor: SharedExec::tokio(),
         }
     }

@@ -270,7 +270,6 @@ impl<T> Grpc<T> {
             if status.code() != Code::Ok {
                 return Err(status);
             }
-
             false
         } else {
             true
@@ -307,7 +306,7 @@ impl GrpcConfig {
         let mut request = request.into_http(
             uri,
             http::Method::POST,
-            http::Version::HTTP_2,
+            http::Version::HTTP_3,
             SanitizeHeaders::Yes,
         );
 
