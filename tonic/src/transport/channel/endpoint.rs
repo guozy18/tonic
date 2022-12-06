@@ -34,19 +34,20 @@ pub struct Endpoint {
     pub(crate) buffer_size: Option<usize>,
     pub(crate) init_stream_window_size: Option<u32>,
     pub(crate) init_connection_window_size: Option<u32>,
-    // pub(crate) tcp_keepalive: Option<Duration>,
-    // pub(crate) tcp_nodelay: bool,
-    // pub(crate) http2_keep_alive_interval: Option<Duration>,
-    // pub(crate) http2_keep_alive_timeout: Option<Duration>,
-    // pub(crate) http2_keep_alive_while_idle: Option<bool>,
+    pub(crate) quic_version: Option<u32>,
+    pub(crate) quic_max_concurrent_bidi_streams: Option<u32>,
+    pub(crate) quic_max_concurrent_uni_streams: Option<u32>,
+    pub(crate) quic_max_idle_timeout: Option<u32>,
+    pub(crate) quic_stream_receive_window: Option<u32>,
+    pub(crate) quic_receive_window: Option<u32>,
+    pub(crate) quic_send_window: Option<u32>,
+    pub(crate) quic_max_tlps: Option<u32>,
+    pub(crate) quic_keep_alive_interval: Option<Duration>,
     pub(crate) connect_timeout: Option<Duration>,
-    // pub(crate) http2_adaptive_window: Option<bool>,
     pub(crate) executor: SharedExec,
 }
 
 impl Endpoint {
-    // FIXME: determine if we want to expose this or not. This is really
-    // just used in codegen for a shortcut.
     #[doc(hidden)]
     pub fn new<D>(dst: D) -> Result<Self, Error>
     where
@@ -166,20 +167,109 @@ impl Endpoint {
         }
     }
 
-    // /// Set whether TCP keepalive messages are enabled on accepted connections.
-    // ///
-    // /// If `None` is specified, keepalive is disabled, otherwise the duration
-    // /// specified will be the time to remain idle before sending TCP keepalive
-    // /// probes.
-    // ///
-    // /// Default is no keepalive (`None`)
-    // ///
-    // pub fn tcp_keepalive(self, tcp_keepalive: Option<Duration>) -> Self {
-    //     Endpoint {
-    //         tcp_keepalive,
-    //         ..self
-    //     }
-    // }
+    /// Set the QUIC version to use.
+    pub fn quic_version(self, ver: u32) -> Self {
+        Endpoint {
+            quic_version: Some(ver),
+            ..self
+        }
+    }
+
+    /// Maximum number of incoming bidirectional streams that may be open concurrently.
+    ///
+    /// Must be nonzero for the peer to open any bidirectional streams.
+    ///
+    /// Worst-case memory use is directly proportional to max_concurrent_bidi_streams *
+    /// stream_receive_window, with an upper bound proportional to receive_window.
+    pub fn quic_max_concurrent_bidi_streams(self, limit: u32) -> Self {
+        Endpoint {
+            quic_max_concurrent_bidi_streams: Some(limit),
+            ..self
+        }
+    }
+
+    /// Variant of max_concurrent_bidi_streams affecting unidirectional streams.
+    pub fn quic_max_concurrent_uni_streams(self, limit: u32) -> Self {
+        Endpoint {
+            quic_max_concurrent_uni_streams: Some(limit),
+            ..self
+        }
+    }
+
+    /// Maximum duration of inactivity to accept before timing out the connection.
+    ///
+    /// The true idle timeout is the minimum of this and the peer’s own max idle
+    /// timeout. None represents an infinite timeout.
+    pub fn quic_max_idle_timeout(self, limit: u32) -> Self {
+        Endpoint {
+            quic_max_idle_timeout: Some(limit),
+            ..self
+        }
+    }
+
+    /// Maximum number of bytes the peer may transmit without acknowledgement on any one
+    /// stream before becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the
+    /// maximum desired throughput. Setting this smaller than receive_window helps ensure
+    /// that a single stream doesn’t monopolize receive buffers, which may otherwise occur
+    /// if the application chooses not to read from a large stream for a time while still
+    /// requiring data on other streams.
+    pub fn quic_stream_receive_window(self, winsz: u32) -> Self {
+        Endpoint {
+            quic_stream_receive_window: Some(winsz),
+            ..self
+        }
+    }
+
+    /// Maximum number of bytes the peer may transmit across all streams of a connection
+    /// before becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the
+    /// maximum desired throughput. Larger values can be useful to allow maximum throughput
+    /// within a stream while another is blocked.
+    pub fn quic_receive_window(self, winsz: u32) -> Self {
+        Endpoint {
+            quic_receive_window: Some(winsz),
+            ..self
+        }
+    }
+
+    /// Maximum number of bytes to transmit to a peer without acknowledgment.
+    ///
+    /// Provides an upper bound on memory when communicating with peers that issue large
+    /// amounts of flow control credit. Endpoints that wish to handle large numbers of
+    /// connections robustly should take care to set this low enough to guarantee memory
+    /// exhaustion does not occur if every connection uses the entire window.
+    pub fn quic_send_window(self, winsz: u32) -> Self {
+        Endpoint {
+            quic_send_window: Some(winsz),
+            ..self
+        }
+    }
+
+    /// Maximum number of tail loss probes before an RTO fires.
+    pub fn quic_max_tlps(self, tlps: u32) -> Self {
+        Endpoint {
+            quic_max_tlps: Some(tlps),
+            ..self
+        }
+    }
+
+    /// Period of inactivity before sending a keep-alive packet.
+    ///
+    /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing
+    /// out.
+    ///
+    /// None to disable, which is the default. Only one side of any given connection needs
+    /// keep-alive enabled for the connection to be preserved. Must be set lower than the
+    /// idle_timeout of both peers to be effective.
+    pub fn quic_keep_alive_interval(self, duration: Duration) -> Self {
+        Endpoint {
+            quic_keep_alive_interval: Some(duration),
+            ..self
+        }
+    }
 
     /// Apply a concurrency limit to each request.
     ///
@@ -247,46 +337,6 @@ impl Endpoint {
         })
     }
 
-    // /// Set the value of `TCP_NODELAY` option for accepted connections. Enabled by default.
-    // pub fn tcp_nodelay(self, enabled: bool) -> Self {
-    //     Endpoint {
-    //         tcp_nodelay: enabled,
-    //         ..self
-    //     }
-    // }
-
-    // /// Set http2 KEEP_ALIVE_INTERVAL. Uses `hyper`'s default otherwise.
-    // pub fn http2_keep_alive_interval(self, interval: Duration) -> Self {
-    //     Endpoint {
-    //         http2_keep_alive_interval: Some(interval),
-    //         ..self
-    //     }
-    // }
-
-    // /// Set http2 KEEP_ALIVE_TIMEOUT. Uses `hyper`'s default otherwise.
-    // pub fn keep_alive_timeout(self, duration: Duration) -> Self {
-    //     Endpoint {
-    //         http2_keep_alive_timeout: Some(duration),
-    //         ..self
-    //     }
-    // }
-
-    // /// Set http2 KEEP_ALIVE_WHILE_IDLE. Uses `hyper`'s default otherwise.
-    // pub fn keep_alive_while_idle(self, enabled: bool) -> Self {
-    //     Endpoint {
-    //         http2_keep_alive_while_idle: Some(enabled),
-    //         ..self
-    //     }
-    // }
-
-    // /// Sets whether to use an adaptive flow control. Uses `hyper`'s default otherwise.
-    // pub fn http2_adaptive_window(self, enabled: bool) -> Self {
-    //     Endpoint {
-    //         http2_adaptive_window: Some(enabled),
-    //         ..self
-    //     }
-    // }
-
     /// Sets the executor used to spawn async tasks.
     ///
     /// Uses `tokio::spawn` by default.
@@ -300,11 +350,7 @@ impl Endpoint {
 
     /// Create a channel from this config.
     pub async fn connect(&self) -> Result<Channel, Error> {
-        let mut http = hyper::client::connect::HttpConnector::new();
-        // TODO: QUIC config
-        http.enforce_http(false);
-        // http.set_nodelay(self.tcp_nodelay);
-        // http.set_keepalive(self.tcp_keepalive);
+        let http = hyper::client::connect::HttpConnector::new();
 
         #[cfg(feature = "tls")]
         let connector = service::connector(http, self.tls.clone());
@@ -427,13 +473,16 @@ impl From<Uri> for Endpoint {
             buffer_size: None,
             init_stream_window_size: None,
             init_connection_window_size: None,
-            // tcp_keepalive: None,
-            // tcp_nodelay: true,
-            // http2_keep_alive_interval: None,
-            // http2_keep_alive_timeout: None,
-            // http2_keep_alive_while_idle: None,
+            quic_version: None,
+            quic_max_concurrent_bidi_streams: None,
+            quic_max_concurrent_uni_streams: None,
+            quic_max_idle_timeout: None,
+            quic_stream_receive_window: None,
+            quic_receive_window: None,
+            quic_send_window: None,
+            quic_max_tlps: None,
+            quic_keep_alive_interval: None,
             connect_timeout: None,
-            // http2_adaptive_window: None,
             executor: SharedExec::tokio(),
         }
     }
