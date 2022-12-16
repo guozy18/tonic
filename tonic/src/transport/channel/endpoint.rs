@@ -4,9 +4,13 @@ use super::Channel;
 use super::ClientTlsConfig;
 #[cfg(feature = "tls")]
 use crate::transport::service::TlsConnector;
-use crate::transport::{service::SharedExec, Error, Executor};
+use crate::transport::{
+    service::{QuicConnector, SharedExec},
+    Error, Executor,
+};
 use bytes::Bytes;
 use http::{uri::Uri, HeaderValue};
+use quinn::ClientConfig;
 use std::{
     convert::{TryFrom, TryInto},
     fmt,
@@ -37,11 +41,9 @@ pub struct Endpoint {
     pub(crate) quic_version: Option<u32>,
     pub(crate) quic_max_concurrent_bidi_streams: Option<u32>,
     pub(crate) quic_max_concurrent_uni_streams: Option<u32>,
-    pub(crate) quic_max_idle_timeout: Option<u32>,
     pub(crate) quic_stream_receive_window: Option<u32>,
     pub(crate) quic_receive_window: Option<u32>,
     pub(crate) quic_send_window: Option<u32>,
-    pub(crate) quic_max_tlps: Option<u32>,
     pub(crate) quic_keep_alive_interval: Option<Duration>,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) executor: SharedExec,
@@ -196,17 +198,6 @@ impl Endpoint {
         }
     }
 
-    /// Maximum duration of inactivity to accept before timing out the connection.
-    ///
-    /// The true idle timeout is the minimum of this and the peer’s own max idle
-    /// timeout. None represents an infinite timeout.
-    pub fn quic_max_idle_timeout(self, limit: u32) -> Self {
-        Endpoint {
-            quic_max_idle_timeout: Some(limit),
-            ..self
-        }
-    }
-
     /// Maximum number of bytes the peer may transmit without acknowledgement on any one
     /// stream before becoming blocked.
     ///
@@ -244,14 +235,6 @@ impl Endpoint {
     pub fn quic_send_window(self, winsz: u32) -> Self {
         Endpoint {
             quic_send_window: Some(winsz),
-            ..self
-        }
-    }
-
-    /// Maximum number of tail loss probes before an RTO fires.
-    pub fn quic_max_tlps(self, tlps: u32) -> Self {
-        Endpoint {
-            quic_max_tlps: Some(tlps),
             ..self
         }
     }
@@ -350,10 +333,14 @@ impl Endpoint {
 
     /// Create a channel from this config.
     pub async fn connect(&self) -> Result<Channel, Error> {
-        let http = hyper::client::connect::HttpConnector::new();
+        let mut config = ClientConfig::with_native_roots();
+        if let Some(version) = self.quic_version {
+            config.version(version);
+        }
+        let quic = QuicConnector::new(Some(config));
 
         #[cfg(feature = "tls")]
-        let connector = service::connector(http, self.tls.clone());
+        let connector = service::connector(quic, self.tls.clone());
 
         #[cfg(not(feature = "tls"))]
         let connector = service::connector(http);
@@ -372,17 +359,17 @@ impl Endpoint {
     /// The channel returned by this method does not attempt to connect to the endpoint until first
     /// use.
     pub fn connect_lazy(&self) -> Channel {
-        let mut http = hyper::client::connect::HttpConnector::new();
-        http.enforce_http(false);
-        // TODO: QUIC config
-        // http.set_nodelay(self.tcp_nodelay);
-        // http.set_keepalive(self.tcp_keepalive);
+        let mut config = ClientConfig::with_native_roots();
+        if let Some(version) = self.quic_version {
+            config.version(version);
+        }
+        let quic = QuicConnector::new(Some(config));
 
         #[cfg(feature = "tls")]
-        let connector = service::connector(http, self.tls.clone());
+        let connector = service::connector(quic, self.tls.clone());
 
         #[cfg(not(feature = "tls"))]
-        let connector = service::connector(http);
+        let connector = service::connector(quic);
 
         if let Some(connect_timeout) = self.connect_timeout {
             let mut connector = hyper_timeout::TimeoutConnector::new(connector);
@@ -476,11 +463,9 @@ impl From<Uri> for Endpoint {
             quic_version: None,
             quic_max_concurrent_bidi_streams: None,
             quic_max_concurrent_uni_streams: None,
-            quic_max_idle_timeout: None,
             quic_stream_receive_window: None,
             quic_receive_window: None,
             quic_send_window: None,
-            quic_max_tlps: None,
             quic_keep_alive_interval: None,
             connect_timeout: None,
             executor: SharedExec::tokio(),
