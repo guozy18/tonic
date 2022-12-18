@@ -1,10 +1,11 @@
 use super::super::BoxFuture;
+use super::quic_http::Http3Connector;
 use super::{grpc_timeout::GrpcTimeout, reconnect::Reconnect, AddOrigin, UserAgent};
 use crate::{body::BoxBody, transport::Endpoint};
 use http::Uri;
 use hyper::client::conn::Builder;
 use hyper::client::connect::Connection as HyperConnection;
-use hyper::client::service::Connect as HyperConnect;
+// use hyper::client::service::Connect as HyperConnect;
 use std::{
     fmt,
     task::{Context, Poll},
@@ -35,30 +36,17 @@ impl Connection {
         C::Response: AsyncRead + AsyncWrite + HyperConnection + Unpin + Send + 'static,
     {
         // TODO: HTTP/3
-        let settings = Builder::new()
-            .http2_initial_stream_window_size(endpoint.init_stream_window_size)
-            .http2_initial_connection_window_size(endpoint.init_connection_window_size)
-            .http2_only(true)
-            // .http2_keep_alive_interval(endpoint.http2_keep_alive_interval)
-            .executor(endpoint.executor.clone())
-            .clone();
-
-        // if let Some(val) = endpoint.http2_keep_alive_timeout {
-        //     settings.http2_keep_alive_timeout(val);
-        // }
-
-        // if let Some(val) = endpoint.http2_keep_alive_while_idle {
-        //     settings.http2_keep_alive_while_idle(val);
-        // }
-
-        // if let Some(val) = endpoint.http2_adaptive_window {
-        //     settings.http2_adaptive_window(val);
-        // }
+        // let settings = Builder::new()
+        //     .http2_initial_stream_window_size(endpoint.init_stream_window_size)
+        //     .http2_initial_connection_window_size(endpoint.init_connection_window_size)
+        //     .http2_only(true)
+        //     // .http2_keep_alive_interval(endpoint.http2_keep_alive_interval)
+        //     .executor(endpoint.executor.clone())
+        //     .clone();
 
         let stack = ServiceBuilder::new()
             .layer_fn(|s| {
                 let origin = endpoint.origin.as_ref().unwrap_or(&endpoint.uri).clone();
-
                 AddOrigin::new(s, origin)
             })
             .layer_fn(|s| UserAgent::new(s, endpoint.user_agent.clone()))
@@ -67,9 +55,9 @@ impl Connection {
             .option_layer(endpoint.rate_limit.map(|(l, d)| RateLimitLayer::new(l, d)))
             .into_inner();
 
-        let connector = HyperConnect::new(connector, settings);
+        // let connector = HyperConnect::new(connector, settings);
+        let connector = Http3Connector::new(connector);
         let conn = Reconnect::new(connector, endpoint.uri.clone(), is_lazy);
-
         let inner = stack.layer(conn);
 
         Self {

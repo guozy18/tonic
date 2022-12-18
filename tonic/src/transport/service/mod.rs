@@ -6,6 +6,7 @@ pub(crate) mod executor;
 pub(crate) mod grpc_timeout;
 mod io;
 mod quic_conn;
+mod quic_http;
 mod reconnect;
 mod router;
 #[cfg(feature = "tls")]
