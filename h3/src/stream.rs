@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[inline]
-pub(crate) async fn write<S, D, B>(stream: &mut S, data: D) -> Result<(), Error>
+pub async fn write<S, D, B>(stream: &mut S, data: D) -> Result<(), Error>
 where
     S: SendStream<B>,
     D: Into<WriteBuf<B>>,
@@ -119,6 +119,23 @@ where
         me.encode_stream_type(ty);
         me.encode_frame_header();
         me
+    }
+}
+
+impl<B> From<&[u8]> for WriteBuf<B>
+where
+    B: Buf,
+{
+    fn from(data: &[u8]) -> Self {
+        // XXX
+        let mut buf = [0; WRITE_BUF_ENCODE_SIZE];
+        buf.copy_from_slice(data);
+        Self {
+            buf,
+            len: data.len(),
+            pos: 0,
+            frame: None
+        }
     }
 }
 

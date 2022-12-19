@@ -37,8 +37,8 @@ transport = [
 ]
 channel = [
   "h2",
-  "h3",
-  "h3-quinn",
+  # "h3",
+  # "h3-quinn",
   "hyper",
   "tokio",
   "tower",
@@ -78,8 +78,8 @@ async-trait = {version = "0.1.13", optional = true}
 
 # transport
 h2 = {version = "0.3", optional = true}
-h3 = {git = "https://github.com/hyperium/h3", rev = "e7e6199", optional = true}
-h3-quinn = {git = "https://github.com/hyperium/h3", rev = "e7e6199", optional = true}
+# h3 = {git = "https://github.com/hyperium/h3", rev = "e7e6199", optional = true}
+# h3-quinn = {git = "https://github.com/hyperium/h3", rev = "e7e6199", optional = true}
 quinn = {version = "0.8", features = ["ring"]}
 hyper = {version = "0.14.14", features = ["full"], optional = true}
 hyper-timeout = {version = "0.4", optional = true}

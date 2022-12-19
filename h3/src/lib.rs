@@ -12,10 +12,13 @@ pub use error::Error;
 mod buf;
 mod connection;
 mod frame;
-mod proto;
+#[allow(missing_docs)]
+pub mod proto;
 #[allow(dead_code)]
-mod qpack;
-mod stream;
+#[allow(missing_docs)]
+pub mod qpack;
+#[allow(missing_docs)]
+pub mod stream;
 
 #[cfg(test)]
 mod tests;

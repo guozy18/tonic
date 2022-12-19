@@ -7,26 +7,21 @@ use futures_core::{
 use http::Uri;
 use hyper::client::connect::Connected as HyperConnected;
 use hyper::client::connect::Connection as HyperConnection;
-use quinn::{self, ClientConfig, Endpoint};
+use h3_quinn::{Endpoint, Connection as H3Connection};
+use quinn::{self, ClientConfig};
 use quinn::{RecvStream, SendStream};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net,
 };
 use tower::Service;
-// use pin_project::pin_project;
 
 pub(crate) struct QuicConnector {
     config: Option<ClientConfig>,
 }
 
 pub(crate) struct QuicConnecting {
-    fut: Pin<Box<dyn Future<Output = Result<QuicStream, crate::Error>> + Send>>,
-}
-
-pub(crate) struct QuicStream {
-    send_stream: SendStream,
-    recv_stream: RecvStream,
+    fut: Pin<Box<dyn Future<Output = Result<h3_quinn::Connection, crate::Error>> + Send>>,
 }
 
 impl QuicConnector {
@@ -38,7 +33,7 @@ impl QuicConnector {
 }
 
 impl Service<Uri> for QuicConnector {
-    type Response = QuicStream;
+    type Response = h3_quinn::Connection;
     type Error = crate::Error;
     type Future = QuicConnecting;
 
@@ -69,13 +64,7 @@ impl Service<Uri> for QuicConnector {
                 .map_err(Box::new)?
                 .await
                 .map_err(Box::new)?;
-            let conn = new_conn.connection;
-
-            let (send_stream, recv_stream) = conn.open_bi().await.map_err(Box::new)?;
-            Ok(QuicStream {
-                send_stream,
-                recv_stream,
-            })
+            Ok(H3Connection::new(new_conn))
         });
 
         QuicConnecting { fut }
@@ -83,54 +72,10 @@ impl Service<Uri> for QuicConnector {
 }
 
 impl Future for QuicConnecting {
-    type Output = Result<QuicStream, crate::Error>;
+    type Output = Result<h3_quinn::Connection, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let fut = Pin::new(&mut self.fut);
         fut.poll(cx)
-    }
-}
-
-impl AsyncRead for QuicStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let recv_stream = Pin::new(&mut self.recv_stream);
-        recv_stream.poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for QuicStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        let send_stream = Pin::new(&mut self.send_stream);
-        send_stream.poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        let send_stream = Pin::new(&mut self.send_stream);
-        send_stream.poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        let send_stream = Pin::new(&mut self.send_stream);
-        send_stream.poll_shutdown(cx)
-    }
-}
-
-impl HyperConnection for QuicStream {
-    fn connected(&self) -> HyperConnected {
-        HyperConnected::new().proxy(true)
     }
 }

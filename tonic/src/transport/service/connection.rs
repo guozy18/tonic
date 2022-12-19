@@ -3,7 +3,6 @@ use super::quic_http::Http3Connector;
 use super::{grpc_timeout::GrpcTimeout, reconnect::Reconnect, AddOrigin, UserAgent};
 use crate::{body::BoxBody, transport::Endpoint};
 use http::Uri;
-use hyper::client::conn::Builder;
 use hyper::client::connect::Connection as HyperConnection;
 // use hyper::client::service::Connect as HyperConnect;
 use std::{
@@ -35,15 +34,6 @@ impl Connection {
         C::Future: Unpin + Send,
         C::Response: AsyncRead + AsyncWrite + HyperConnection + Unpin + Send + 'static,
     {
-        // TODO: HTTP/3
-        // let settings = Builder::new()
-        //     .http2_initial_stream_window_size(endpoint.init_stream_window_size)
-        //     .http2_initial_connection_window_size(endpoint.init_connection_window_size)
-        //     .http2_only(true)
-        //     // .http2_keep_alive_interval(endpoint.http2_keep_alive_interval)
-        //     .executor(endpoint.executor.clone())
-        //     .clone();
-
         let stack = ServiceBuilder::new()
             .layer_fn(|s| {
                 let origin = endpoint.origin.as_ref().unwrap_or(&endpoint.uri).clone();

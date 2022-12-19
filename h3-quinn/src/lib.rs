@@ -3,19 +3,19 @@
 //! This module implements QUIC traits with Quinn.
 #![deny(missing_docs)]
 
+use bytes::{Buf, Bytes};
+use futures_util::future::FutureExt as _;
+use futures_util::ready;
+use futures_util::stream::StreamExt as _;
 use std::{
     convert::TryInto,
     fmt::{self, Display},
+    io::ErrorKind,
     pin::Pin,
     sync::Arc,
-    task::{self, Poll},
+    task::{self, Context, Poll},
 };
-
-use bytes::{Buf, Bytes};
-use futures_util::future::FutureExt as _;
-use futures_util::io::AsyncWrite as _;
-use futures_util::ready;
-use futures_util::stream::StreamExt as _;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 pub use quinn::{
     self, crypto::Session, Endpoint, IncomingBiStreams, IncomingUniStreams, NewConnection, OpenBi,
@@ -52,6 +52,52 @@ impl Connection {
             incoming_uni: uni_streams,
             opening_uni: None,
         }
+    }
+}
+
+impl AsyncRead for Connection {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        use quic::Connection as QuicConnection;
+        let mut bidi: BidiStream<Bytes> = ready!(self.poll_open_bidi(cx)).map_err(std_err)?;
+        let bidi = Pin::new(&mut bidi);
+        bidi.poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Connection {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        use quic::Connection as QuicConnection;
+        let mut bidi: BidiStream<Bytes> = ready!(self.poll_open_bidi(cx)).map_err(std_err)?;
+        let bidi = Pin::new(&mut bidi);
+        bidi.poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        use quic::Connection as QuicConnection;
+        let mut bidi: BidiStream<Bytes> = ready!(self.poll_open_bidi(cx)).map_err(std_err)?;
+        let bidi = Pin::new(&mut bidi);
+        bidi.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        use quic::Connection as QuicConnection;
+        let mut bidi: BidiStream<Bytes> = ready!(self.poll_open_bidi(cx)).map_err(std_err)?;
+        let bidi = Pin::new(&mut bidi);
+        bidi.poll_shutdown(cx)
     }
 }
 
@@ -303,6 +349,46 @@ where
     }
 }
 
+impl<B> AsyncRead for BidiStream<B>
+where
+    B: Buf + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.recv).poll_read(cx, buf)
+    }
+}
+
+impl<B> AsyncWrite for BidiStream<B>
+where
+    B: Buf + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.send).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.send).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.send).poll_shutdown(cx)
+    }
+}
+
 /// Quinn-backed receive stream
 ///
 /// Implements a [`quic::RecvStream`] backed by a [`quinn::RecvStream`].
@@ -335,6 +421,21 @@ impl quic::RecvStream for RecvStream {
         let _ = self
             .stream
             .stop(VarInt::from_u64(error_code).expect("invalid error_code"));
+    }
+}
+
+impl AsyncRead for RecvStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        use quic::RecvStream;
+        let data = ready!(self.poll_data(cx)).map_err(std_err)?;
+        if let Some(bytes) = data {
+            buf.put_slice(&bytes[..]);
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -381,6 +482,10 @@ impl Error for ReadError {
             _ => None,
         }
     }
+}
+
+fn std_err(_e: impl Error) -> std::io::Error {
+    std::io::Error::new(ErrorKind::Other, "other error")
 }
 
 /// Quinn-backed send stream
@@ -458,6 +563,34 @@ where
 
     fn id(&self) -> StreamId {
         self.stream.id().0.try_into().expect("invalid stream id")
+    }
+}
+
+impl<B> AsyncWrite for SendStream<B>
+where
+    B: Buf + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        use quic::SendStream as QuicSendStream;
+        self.send_data::<&[u8]>(buf.into()).map_err(std_err)?;
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        use quic::SendStream as QuicSendStream;
+        self.poll_ready(cx).map_err(std_err)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        use quic::SendStream as QuicSendStream;
+        self.poll_finish(cx).map_err(std_err)
     }
 }
 

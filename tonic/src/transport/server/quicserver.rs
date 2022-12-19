@@ -1,27 +1,20 @@
 use std::error::Error as StdError;
 use std::marker::PhantomData;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use crate::body::BoxBody;
 use crate::transport::service::ServerIo;
-use bytes::{Buf, Bytes, BytesMut};
-use futures::{Future, Stream, StreamExt};
+use futures::Future;
 use h3_quinn::NewConnection;
-use http::{Request, Response, StatusCode};
+use http::{Request, Response};
 use http_body::Body as HttpBody;
-use rustls::{Certificate, PrivateKey};
-use tokio::{
-    fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
-};
 use tower::Service;
-use tracing::{debug, error, info, trace, trace_span, warn};
+use tracing::debug;
 
 use pin_project_lite::pin_project;
 
-use h3::{error::ErrorLevel, quic::BidiStream, server::RequestStream};
 use h3_quinn::quinn::{Connecting, Incoming};
 
 use super::Connected;
@@ -110,7 +103,7 @@ where
         cx: &mut Context<'_>,
         service_fut: Pin<&mut impl Future>,
     ) -> Poll<crate::Result<()>> {
-        let me = self.project();
+        let mut me = self.project();
 
         loop {
             let next = {
@@ -137,51 +130,51 @@ where
                     StateProj::Connected { connection } => {
                         // construct inner server.
                         // me.make_service.call(req)
-                        let service = ready!(service_fut.poll(cx));
+                        let _service = ready!(service_fut.poll(cx));
                         // ready!(inner_server)
-                        let mut new_fut = async move {
+                        let new_fut = async move {
                             debug!("New connection now established");
-                            let mut h3_conn =
-                                h3::server::Connection::new(h3_quinn::Connection::new(*connection))
-                                    .await
-                                    .unwrap();
-                            loop {
-                                match h3_conn.accept().await {
-                                    Ok(Some((req, stream))) => {
-                                        // let root = ;
-                                        debug!("New request: {:#?}", req);
+                            // let mut h3_conn =
+                            //     h3::server::Connection::new(h3_quinn::Connection::new(*connection))
+                            //         .await
+                            //         .unwrap();
+                            // loop {
+                            //     match h3_conn.accept().await {
+                            //         Ok(Some((req, stream))) => {
+                            //             // let root = ;
+                            //             debug!("New request: {:#?}", req);
 
-                                        tokio::spawn(async {
-                                            // 在这里构建QUICServer的请求
-                                            // !FIXME! todo!()
-                                            let status = StatusCode::OK;
-                                            let resp = http::Response::builder()
-                                                .status(status)
-                                                .body(())
-                                                .unwrap();
+                            //             tokio::spawn(async {
+                            //                 // 在这里构建QUICServer的请求
+                            //                 // !FIXME! todo!()
+                            //                 let status = StatusCode::OK;
+                            //                 let resp = http::Response::builder()
+                            //                     .status(status)
+                            //                     .body(())
+                            //                     .unwrap();
 
-                                            match stream.send_response(resp).await {
-                                                Ok(_) => {
-                                                    debug!("Response to connection successful");
-                                                }
-                                                Err(err) => {
-                                                    error!("Unable to send response to connection peer: {:?}", err);
-                                                }
-                                            }
+                            //                 match stream.send_response(resp).await {
+                            //                     Ok(_) => {
+                            //                         debug!("Response to connection successful");
+                            //                     }
+                            //                     Err(err) => {
+                            //                         error!("Unable to send response to connection peer: {:?}", err);
+                            //                     }
+                            //                 }
 
-                                            let buf = service.call(req).await;
-                                            stream.send_data(buf.freeze()).await;
-                                            if let Err(e) = stream.finish().await {
-                                                error!("request failed: {}", e);
-                                            }
-                                        });
-                                    }
-                                    Ok(None) => {
-                                        break;
-                                    }
-                                    Err(_) => todo!(),
-                                }
-                            }
+                            //                 // let buf = service.call(req).await;
+                            //                 // stream.send_data(buf.freeze()).await;
+                            //                 // if let Err(e) = stream.finish().await {
+                            //                 //     error!("request failed: {}", e);
+                            //                 // }
+                            //             });
+                            //         }
+                            //         Ok(None) => {
+                            //             break;
+                            //         }
+                            //         Err(_) => todo!(),
+                            //     }
+                            // }
                         };
 
                         futures::pin_mut!(new_fut);
@@ -196,26 +189,27 @@ where
     }
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
-        let mut me = self.project();
+        todo!()
+        // let mut me = self.project();
 
-        loop {
-            match ready!(me.make_service.poll_ready(cx)) {
-                Ok(()) => (),
-                Err(e) => {
-                    return Poll::Ready(Err(crate::Status::from_error_generic(e)));
-                }
-            }
+        // loop {
+        //     match ready!(me.make_service.poll_ready(cx)) {
+        //         Ok(()) => (),
+        //         Err(e) => {
+        //             return Poll::Ready(Err(crate::Status::from_error_generic(e)));
+        //         }
+        //     }
 
-            if let Some(connecting) = ready!(me.incoming.poll_next(cx)) {
-                let new_fut = me.make_service.call();
-                futures::pin_mut!(new_fut);
-                let new_state = State::Connecting { connecting };
-                // me.state.set(new_state);
-                self.poll_next_(cx, new_fut);
-            } else {
-                return Poll::Ready(Ok(()));
-            }
-        }
+        //     if let Some(connecting) = ready!(me.incoming.poll_next(cx)) {
+        //         let new_fut = me.make_service.call();
+        //         futures::pin_mut!(new_fut);
+        //         let new_state = State::Connecting { connecting };
+        //         // me.state.set(new_state);
+        //         self.poll_next_(cx, new_fut);
+        //     } else {
+        //         return Poll::Ready(Ok(()));
+        //     }
+        // }
     }
 }
 
