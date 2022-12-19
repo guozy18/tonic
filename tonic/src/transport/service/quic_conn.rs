@@ -4,16 +4,10 @@ use futures_core::{
     Future,
 };
 // use h3_quinn::{SendStream, RecvStream};
+use h3_quinn::{Connection as H3Connection, Endpoint};
 use http::Uri;
-use hyper::client::connect::Connected as HyperConnected;
-use hyper::client::connect::Connection as HyperConnection;
-use h3_quinn::{Endpoint, Connection as H3Connection};
 use quinn::{self, ClientConfig};
-use quinn::{RecvStream, SendStream};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net,
-};
+use tokio::net;
 use tower::Service;
 
 pub(crate) struct QuicConnector {

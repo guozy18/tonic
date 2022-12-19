@@ -127,14 +127,14 @@ where
     B: Buf,
 {
     fn from(data: &[u8]) -> Self {
-        // XXX
+        // XXX: strange implementation
         let mut buf = [0; WRITE_BUF_ENCODE_SIZE];
         buf.copy_from_slice(data);
         Self {
             buf,
             len: data.len(),
             pos: 0,
-            frame: None
+            frame: None,
         }
     }
 }

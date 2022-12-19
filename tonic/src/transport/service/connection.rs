@@ -2,6 +2,7 @@ use super::super::BoxFuture;
 use super::quic_http::Http3Connector;
 use super::{grpc_timeout::GrpcTimeout, reconnect::Reconnect, AddOrigin, UserAgent};
 use crate::{body::BoxBody, transport::Endpoint};
+use h3::quic::OpenStreams;
 use http::Uri;
 use hyper::client::connect::Connection as HyperConnection;
 // use hyper::client::service::Connect as HyperConnect;
@@ -46,7 +47,7 @@ impl Connection {
             .into_inner();
 
         // let connector = HyperConnect::new(connector, settings);
-        let connector = Http3Connector::new(connector);
+        let connector: Http3Connector<C, h3_quinn::OpenStreams, h3_quinn::Connection> = Http3Connector::new(connector);
         let conn = Reconnect::new(connector, endpoint.uri.clone(), is_lazy);
         let inner = stack.layer(conn);
 
