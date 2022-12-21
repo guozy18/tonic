@@ -2,9 +2,10 @@
 
 mod conn;
 mod incoming;
-mod myserver;
+mod new_server;
 mod quicserver;
 mod recover_error;
+mod service;
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 mod tls;
@@ -777,6 +778,7 @@ impl<S> fmt::Debug for Svc<S> {
     }
 }
 
+// #[derive(Clone)]
 struct MakeSvc<S, IO> {
     concurrency_limit: Option<usize>,
     timeout: Option<Duration>,

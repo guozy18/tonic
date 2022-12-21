@@ -47,7 +47,8 @@ impl Connection {
             .into_inner();
 
         // let connector = HyperConnect::new(connector, settings);
-        let connector: Http3Connector<C, h3_quinn::OpenStreams, h3_quinn::Connection> = Http3Connector::new(connector);
+        let connector: Http3Connector<C, h3_quinn::OpenStreams, h3_quinn::Connection> =
+            Http3Connector::new(connector);
         let conn = Reconnect::new(connector, endpoint.uri.clone(), is_lazy);
         let inner = stack.layer(conn);
 

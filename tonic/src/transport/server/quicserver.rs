@@ -4,20 +4,27 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::body::BoxBody;
+// use crate::body::BoxBody;
+use super::service::HttpService;
 use crate::transport::service::ServerIo;
 use futures::Future;
 use h3_quinn::NewConnection;
-use http::{Request, Response};
+// use http::{Request, Response};
 use http_body::Body as HttpBody;
+use hyper::Body;
+// use rustls::{Certificate, PrivateKey};
+// use tokio::{
+//     fs::File,
+//     io::{AsyncRead, AsyncReadExt, AsyncWrite},
+// };
 use tower::Service;
 use tracing::debug;
 
 use pin_project_lite::pin_project;
 
-use h3_quinn::quinn::{Connecting, Incoming};
-
 use super::Connected;
+use h3_quinn::quinn::{Connecting, Incoming};
+// use super::{Connected, BoxService};
 
 macro_rules! ready {
     ($e:expr) => {
@@ -37,6 +44,7 @@ pin_project! {
     pub struct QuicServer <S, IO> {
         #[pin]
         incoming: Incoming,
+        #[pin]
         make_service: S,
         #[pin]
         state: State,
@@ -60,7 +68,7 @@ pin_project! {
     }
 }
 
-impl<S, IO> QuicServer<S, IO> {
+impl QuicServer<(), ()> {
     /// Starts a [`Builder`](Builder) with the provided incoming stream.
     pub fn builder(incoming: Incoming) -> QuicBuilder {
         QuicBuilder { incoming }
@@ -72,7 +80,7 @@ impl<S, IO> QuicServer<S, IO> {
     ///
     /// This method will panic if binding to the address fails. For a method
     /// to bind to an address and return a `Result`, see `Server::try_bind`.
-    pub fn bind(addr: &SocketAddr) -> QuicBuilder {
+    pub fn bind(_addr: &SocketAddr) -> QuicBuilder {
         // let incoming = AddrIncoming::new(addr).unwrap_or_else(|e| {
         //     panic!("error binding to {}: {}", addr, e);
         // });
@@ -80,22 +88,18 @@ impl<S, IO> QuicServer<S, IO> {
     }
 
     /// Tries to bind to the provided address, and returns a [`Builder`](Builder).
-    pub fn try_bind(addr: &SocketAddr) -> crate::Result<QuicBuilder> {
+    pub fn try_bind(_addr: &SocketAddr) -> crate::Result<QuicBuilder> {
         // AddrIncoming::new(addr).map(Server::builder)
         unimplemented!()
     }
 }
 
-impl<S, IO> QuicServer<S, IO>
+impl<S, B, IO> QuicServer<S, IO>
 where
-    // S: Service<ServerIo<IO>, Response = Response<BoxBody>> + Clone + Send + 'static,
-    S: Service<ServerIo<IO>> + Clone + Send + 'static,
+    S: MakeServiceRef<ServerIo<IO>, Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    // S: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
-    // S::Future: Send + 'static,
-    // S::Error: Into<crate::Error> + Send,
-    // ResBody: http_body::Body<Data = Bytes> + Send + 'static,
-    // ResBody::Error: Into<crate::Error>,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
     IO: Connected,
 {
     fn poll_next_(
@@ -178,8 +182,8 @@ where
                         };
 
                         futures::pin_mut!(new_fut);
-                        let x = ready!(new_fut.poll(cx));
-                        return Poll::Ready(Ok(x));
+                        ready!(new_fut.poll(cx));
+                        return Poll::Ready(Ok(()));
                     }
                 }
             };
@@ -190,10 +194,12 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
         todo!()
+        // let mut me = &mut *self;
+
         // let mut me = self.project();
 
         // loop {
-        //     match ready!(me.make_service.poll_ready(cx)) {
+        //     match ready!(me.make_service.poll_ready_ref(cx)) {
         //         Ok(()) => (),
         //         Err(e) => {
         //             return Poll::Ready(Err(crate::Status::from_error_generic(e)));
@@ -201,7 +207,7 @@ where
         //     }
 
         //     if let Some(connecting) = ready!(me.incoming.poll_next(cx)) {
-        //         let new_fut = me.make_service.call();
+        //         let new_fut = me.make_service.make_service_ref();
         //         futures::pin_mut!(new_fut);
         //         let new_state = State::Connecting { connecting };
         //         // me.state.set(new_state);
@@ -213,10 +219,12 @@ where
     }
 }
 
-impl<S, IO> Future for QuicServer<S, IO>
+impl<S, B, IO> Future for QuicServer<S, IO>
 where
-    S: Service<ServerIo<IO>, Response = Response<BoxBody>> + Clone + Send + 'static,
+    S: MakeServiceRef<ServerIo<IO>, Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
     IO: Connected,
 {
     type Output = crate::Result<()>;
@@ -226,12 +234,12 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct QuicBuilder {
     incoming: Incoming,
 }
 
 // ===== impl Builder =====
-
 impl QuicBuilder {
     /// Start a new builder, wrapping an incoming stream and low-level options.
     ///
@@ -244,11 +252,11 @@ impl QuicBuilder {
     ///
     pub fn serve<S, B, IO>(self, make_service: S) -> QuicServer<S, IO>
     where
-        S: Service<Request<BoxBody>, Response = Response<BoxBody>> + Clone + Send + 'static,
+        IO: Connected,
+        S: MakeServiceRef<ServerIo<IO>, Body, ResBody = B>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         B: HttpBody + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        IO: Connected,
     {
         QuicServer {
             incoming: self.incoming,
@@ -259,160 +267,75 @@ impl QuicBuilder {
     }
 }
 
-// #[tokio::main]
-// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//     let root: Option<PathBuf> = None;
-//     let root = if let Some(root) = root {
-//         if !root.is_dir() {
-//             return Err(format!("{}: is not a readable directory", root.display()).into());
-//         } else {
-//             info!("serving {}", root.display());
-//             Arc::new(Some(root))
-//         }
-//     } else {
-//         Arc::new(None)
-//     };
+// Just a sort-of "trait alias" of `MakeService`, not to be implemented
+// by anyone, only used as bounds.
+pub trait MakeServiceRef<Target, ReqBody>: sealed::Sealed<(Target, ReqBody)> {
+    type ResBody: HttpBody;
+    type Error: Into<Box<dyn StdError + Send + Sync>>;
+    type Service: HttpService<ReqBody, ResBody = Self::ResBody, Error = Self::Error>;
+    type MakeError: Into<Box<dyn StdError + Send + Sync>>;
+    type Future: Future<Output = Result<Self::Service, Self::MakeError>>;
 
-//     let crypto = load_crypto().await?;
-//     let server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
-//     let listen: SocketAddr = "127.0.0.1:4433".parse().unwrap();
-//     let (endpoint, mut incoming) = h3_quinn::quinn::Endpoint::server(server_config, listen)?;
+    // Acting like a #[non_exhaustive] for associated types of this trait.
+    //
+    // Basically, no one outside of hyper should be able to set this type
+    // or declare bounds on it, so it should prevent people from creating
+    // trait objects or otherwise writing code that requires using *all*
+    // of the associated types.
+    //
+    // Why? So we can add new associated types to this alias in the future,
+    // if necessary.
+    type __DontNameMe: sealed::CantImpl;
 
-//     info!("Listening on {}", listen);
+    fn poll_ready_ref(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::MakeError>>;
 
-//     while let Some(new_conn) = incoming.next().await {
-//         trace_span!("New connection being attempted");
+    fn make_service_ref(&mut self, target: &Target) -> Self::Future;
+}
 
-//         let root = root.clone();
-//         tokio::spawn(async move {
-//             match new_conn.await {
-//                 Ok(conn) => {
-//                     debug!("New connection now established");
+impl<T, Target, E, ME, S, F, IB, OB> MakeServiceRef<Target, IB> for T
+where
+    T: for<'a> Service<&'a Target, Error = ME, Response = S, Future = F>,
+    E: Into<Box<dyn StdError + Send + Sync>>,
+    ME: Into<Box<dyn StdError + Send + Sync>>,
+    S: HttpService<IB, ResBody = OB, Error = E>,
+    F: Future<Output = Result<S, ME>>,
+    IB: HttpBody,
+    OB: HttpBody,
+{
+    type Error = E;
+    type Service = S;
+    type ResBody = OB;
+    type MakeError = ME;
+    type Future = F;
 
-//                     let mut h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(conn))
-//                         .await
-//                         .unwrap();
-//                     loop {
-//                         match h3_conn.accept().await {
-//                             Ok(Some((req, stream))) => {
-//                                 let root = root.clone();
-//                                 debug!("New request: {:#?}", req);
+    type __DontNameMe = sealed::CantName;
 
-//                                 tokio::spawn(async {
-//                                     if let Err(e) = handle_request(req, stream, root).await {
-//                                         error!("request failed: {}", e);
-//                                     }
-//                                 });
-//                             }
-//                             Ok(None) => {
-//                                 break;
-//                             }
-//                             Err(err) => {
-//                                 warn!("error on accept {}", err);
-//                                 match err.get_error_level() {
-//                                     ErrorLevel::ConnectionError => break,
-//                                     ErrorLevel::StreamError => continue,
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//                 Err(err) => {
-//                     warn!("accepting connection failed: {:?}", err);
-//                 }
-//             }
-//         });
-//     }
+    fn poll_ready_ref(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::MakeError>> {
+        self.poll_ready(cx)
+    }
 
-//     endpoint.wait_idle().await;
+    fn make_service_ref(&mut self, target: &Target) -> Self::Future {
+        self.call(target)
+    }
+}
 
-//     Ok(())
-// }
+impl<T, Target, S, B1, B2> sealed::Sealed<(Target, B1)> for T
+where
+    T: for<'a> Service<&'a Target, Response = S>,
+    S: HttpService<B1, ResBody = B2>,
+    B1: HttpBody,
+    B2: HttpBody,
+{
+}
 
-// async fn handle_request<T>(
-//     req: Request<()>,
-//     mut stream: RequestStream<T, Bytes>,
-//     serve_root: Arc<Option<PathBuf>>,
-// ) -> Result<(), Box<dyn std::error::Error>>
-// where
-//     T: BidiStream<Bytes>,
-// {
-//     let (status, to_serve) = match serve_root.as_deref() {
-//         None => (StatusCode::OK, None),
-//         Some(_) if req.uri().path().contains("..") => (StatusCode::NOT_FOUND, None),
-//         Some(root) => {
-//             let to_serve = root.join(req.uri().path().strip_prefix('/').unwrap_or(""));
-//             match File::open(&to_serve).await {
-//                 Ok(file) => (StatusCode::OK, Some(file)),
-//                 Err(e) => {
-//                     debug!("failed to open: \"{}\": {}", to_serve.to_string_lossy(), e);
-//                     (StatusCode::NOT_FOUND, None)
-//                 }
-//             }
-//         }
-//     };
+mod sealed {
+    pub trait Sealed<X> {}
 
-//     let resp = http::Response::builder().status(status).body(()).unwrap();
+    #[allow(unreachable_pub)] // This is intentional.
+    pub trait CantImpl {}
 
-//     match stream.send_response(resp).await {
-//         Ok(_) => {
-//             debug!("Response to connection successful");
-//         }
-//         Err(err) => {
-//             error!("Unable to send response to connection peer: {:?}", err);
-//         }
-//     }
+    #[allow(missing_debug_implementations)]
+    pub enum CantName {}
 
-//     if let Some(mut file) = to_serve {
-//         loop {
-//             let mut buf = BytesMut::with_capacity(4096 * 10);
-//             if file.read_buf(&mut buf).await? == 0 {
-//                 break;
-//             }
-//             stream.send_data(buf.freeze()).await?;
-//         }
-//     }
-
-//     Ok(stream.finish().await?)
-// }
-
-// static ALPN: &[u8] = b"h3";
-
-// async fn load_crypto() -> Result<rustls::ServerConfig, Box<dyn std::error::Error>> {
-//     let cert: Option<PathBuf> = None;
-//     let key: Option<PathBuf> = None;
-//     let (cert, key) = match (cert, key) {
-//         (None, None) => build_certs(),
-//         (Some(cert_path), Some(ref key_path)) => {
-//             let mut cert_v = Vec::new();
-//             let mut key_v = Vec::new();
-
-//             let mut cert_f = File::open(cert_path).await?;
-//             let mut key_f = File::open(key_path).await?;
-
-//             cert_f.read_to_end(&mut cert_v).await?;
-//             key_f.read_to_end(&mut key_v).await?;
-//             (rustls::Certificate(cert_v), PrivateKey(key_v))
-//         }
-//         (_, _) => return Err("cert and key args are mutually dependant".into()),
-//     };
-
-//     let mut crypto = rustls::ServerConfig::builder()
-//         .with_safe_default_cipher_suites()
-//         .with_safe_default_kx_groups()
-//         .with_protocol_versions(&[&rustls::version::TLS13])
-//         .unwrap()
-//         .with_no_client_auth()
-//         .with_single_cert(vec![cert], key)?;
-//     crypto.max_early_data_size = u32::MAX;
-//     crypto.alpn_protocols = vec![ALPN.into()];
-
-//     Ok(crypto)
-// }
-
-// pub fn build_certs() -> (Certificate, PrivateKey) {
-//     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-//     let key = PrivateKey(cert.serialize_private_key_der());
-//     let cert = Certificate(cert.serialize_der().unwrap());
-//     (cert, key)
-// }
+    impl CantImpl for CantName {}
+}
