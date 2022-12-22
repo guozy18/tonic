@@ -1,6 +1,10 @@
+// use crate::transport::Server;
 use crate::transport::server::Connected;
+use bytes::Bytes;
 use hyper::client::connect::{Connected as HyperConnected, Connection};
+use std::borrow::BorrowMut;
 use std::io;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -21,6 +25,20 @@ impl BoxedIo {
         BoxedIo(Box::pin(io))
     }
 }
+
+// impl Deref for BoxedIo {
+//     type Target = Pin<Box<dyn Io>>;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+// impl DerefMut for BoxedIo {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.0
+//     }
+// }
 
 impl Connection for BoxedIo {
     fn connected(&self) -> HyperConnected {

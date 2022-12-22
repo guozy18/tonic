@@ -249,7 +249,7 @@ where
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel)
             == 1
         {
-            if let Some(w) = self.conn_waker.take() {
+            if let Some(w) = Option::take(&mut self.conn_waker) {
                 w.wake()
             }
             self.shared_state().write("SendRequest drop").error = Some(Error::closed());

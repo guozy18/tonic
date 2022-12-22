@@ -1,13 +1,11 @@
 use bytes::Bytes;
 use futures_core::Future;
-use h3::quic::Connection as QuicConnection;
 use http::{Request, Response};
 use http_body::combinators::UnsyncBoxBody;
 use http_body::Body as HttpBody;
-use hyper::Body;
 use hyper::rt::Executor;
+use hyper::Body;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
@@ -18,30 +16,25 @@ use crate::Status;
 
 use super::executor;
 
-pub(crate) struct Http3Connector<M, C> {
+pub(crate) struct Http3Connector<M> {
     inner: M,
-    _marker: PhantomData<C>,
 }
 
-impl<M, C> Http3Connector<M, C> {
+impl<M> Http3Connector<M> {
     pub(crate) fn new(inner: M) -> Self {
-        Self {
-            inner,
-            _marker: PhantomData,
-        }
+        Self { inner }
     }
 }
 
 pub(crate) struct SendRequest<T>(mpsc::UnboundedSender<T>);
 
-impl<M, T, C> Service<T> for Http3Connector<M, C>
+impl<M, T> Service<T> for Http3Connector<M>
 where
-    M: MakeConnection<T, Connection = C> + Send,
+    M: MakeConnection<T> + Send,
     M::Connection: Unpin + Send + 'static,
     M::Future: Send + 'static,
     M::Error: Into<crate::Error> + Send,
     T: Send,
-    C: QuicConnection<Bytes> + Send,
 {
     type Response = SendRequest<Request<UnsyncBoxBody<Bytes, Status>>>;
     type Error = crate::Error;
@@ -56,7 +49,7 @@ where
         let make_conn = self.inner.make_connection(req);
         Box::pin(async move {
             let conn = make_conn.await.map_err(Into::into)?;
-            let (_conn, sr) = h3::client::new(conn).await.map_err(Box::new)?;
+            // let (_conn, sr) = h3::client::new(conn).await.map_err(Box::new)?;
             let (tx, mut rx) = mpsc::unbounded_channel();
             executor::SharedExec::tokio().execute(Box::pin(async move {
                 if let Some(data) = rx.recv().await {

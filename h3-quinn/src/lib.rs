@@ -7,9 +7,9 @@ use bytes::{Buf, Bytes};
 use futures_util::future::FutureExt as _;
 use futures_util::ready;
 use futures_util::stream::StreamExt as _;
+use h3::quic::Connection as QuicConnection;
 use h3::quic::{
-    self, Connection as QuicConnection, Error, RecvStream as QuicRecvStream,
-    SendStream as QuicSendStream, StreamId, WriteBuf,
+    self, Error, RecvStream as QuicRecvStream, SendStream as QuicSendStream, StreamId, WriteBuf,
 };
 pub use quinn::{
     self, crypto::Session, Endpoint, IncomingBiStreams, IncomingUniStreams, NewConnection, OpenBi,

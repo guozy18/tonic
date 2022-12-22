@@ -344,13 +344,15 @@ impl Endpoint {
         #[cfg(not(feature = "tls"))]
         let connector = service::connector(http);
 
-        if let Some(connect_timeout) = self.connect_timeout {
-            let mut connector = hyper_timeout::TimeoutConnector::new(connector);
-            connector.set_connect_timeout(Some(connect_timeout));
-            Channel::connect(connector, self.clone()).await
-        } else {
-            Channel::connect(connector, self.clone()).await
-        }
+        // if let Some(connect_timeout) = self.connect_timeout {
+        //     let mut connector = hyper_timeout::TimeoutConnector::new(connector);
+        //     connector.set_connect_timeout(Some(connect_timeout));
+        //     Channel::connect(connector, self.clone()).await
+        // } else {
+        //     Channel::connect(connector, self.clone()).await
+        // }
+
+        Channel::connect(connector, self.clone()).await
     }
 
     /// Create a channel from this config.
@@ -370,13 +372,15 @@ impl Endpoint {
         #[cfg(not(feature = "tls"))]
         let connector = service::connector(quic);
 
-        if let Some(connect_timeout) = self.connect_timeout {
-            let mut connector = hyper_timeout::TimeoutConnector::new(connector);
-            connector.set_connect_timeout(Some(connect_timeout));
-            Channel::new(connector, self.clone())
-        } else {
-            Channel::new(connector, self.clone())
-        }
+        // if let Some(connect_timeout) = self.connect_timeout {
+        //     let mut connector = hyper_timeout::TimeoutConnector::new(connector);
+        //     connector.set_connect_timeout(Some(connect_timeout));
+        //     Channel::new(connector, self.clone())
+        // } else {
+        //     Channel::new(connector, self.clone())
+        // }
+
+        Channel::new(connector, self.clone())
     }
 
     /// Connect with a custom connector.
@@ -399,13 +403,15 @@ impl Endpoint {
         #[cfg(not(feature = "tls"))]
         let connector = service::connector(connector);
 
-        if let Some(connect_timeout) = self.connect_timeout {
-            let mut connector = hyper_timeout::TimeoutConnector::new(connector);
-            connector.set_connect_timeout(Some(connect_timeout));
-            Channel::connect(connector, self.clone()).await
-        } else {
-            Channel::connect(connector, self.clone()).await
-        }
+        // if let Some(connect_timeout) = self.connect_timeout {
+        //     let mut connector = hyper_timeout::TimeoutConnector::new(connector);
+        //     connector.set_connect_timeout(Some(connect_timeout));
+        //     Channel::connect(connector, self.clone()).await
+        // } else {
+        //     Channel::connect(connector, self.clone()).await
+        // }
+
+        Channel::connect(connector, self.clone()).await
     }
 
     /// Connect with a custom connector lazily.

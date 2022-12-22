@@ -39,7 +39,7 @@ channel = [
   "h2",
   # "h3",
   # "h3-quinn",
-  # "hyper",
+  "hyper",
   "tokio",
   "tower",
   "tracing-futures",
@@ -79,7 +79,7 @@ async-trait = { version = "0.1.13", optional = true }
 # transport
 h2 = { version = "0.3", optional = true }
 quinn = { version = "0.8", features = ["ring"] }
-hyper = { path = "../hyper", features = ["full"] }
+hyper = { version = "0.14", features = ["full"], optional = true }
 hyper-timeout = { version = "0.4", optional = true }
 tokio = { version = "1.0.1", features = ["net"], optional = true }
 tokio-stream = "0.1"

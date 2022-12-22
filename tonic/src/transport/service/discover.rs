@@ -1,5 +1,5 @@
-use super::super::service;
 use super::connection::Connection;
+use super::{super::service, QuicConnector};
 use crate::transport::Endpoint;
 
 use std::{
@@ -33,16 +33,14 @@ impl<K: Hash + Eq + Clone> Stream for DynamicServiceStream<K> {
             Poll::Pending | Poll::Ready(None) => Poll::Pending,
             Poll::Ready(Some(change)) => match change {
                 Change::Insert(k, endpoint) => {
-                    let mut http = hyper::client::connect::HttpConnector::new();
-                    // TODO: QUIC config
-                    // http.set_nodelay(endpoint.tcp_nodelay);
-                    // http.set_keepalive(endpoint.tcp_keepalive);
-                    http.enforce_http(false);
+                    let quic = QuicConnector::new(None);
+
                     #[cfg(feature = "tls")]
-                    let connector = service::connector(http, endpoint.tls.clone());
+                    let connector = service::connector(quic, endpoint.tls.clone());
 
                     #[cfg(not(feature = "tls"))]
-                    let connector = service::connector(http);
+                    let connector = service::connector(quic);
+
                     let connection = Connection::lazy(connector, endpoint);
                     let change = Ok(Change::Insert(k, connection));
                     Poll::Ready(Some(change))

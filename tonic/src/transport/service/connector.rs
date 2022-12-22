@@ -2,6 +2,7 @@ use super::super::BoxFuture;
 use super::io::BoxedIo;
 #[cfg(feature = "tls")]
 use super::tls::TlsConnector;
+use bytes::Bytes;
 use http::Uri;
 #[cfg(feature = "tls-roots-common")]
 use std::convert::TryInto;
