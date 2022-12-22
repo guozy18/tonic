@@ -41,14 +41,13 @@ pin_project! {
     /// `Server` is a `Future` mapping a bound listener with a set of service
     /// handlers. It is built using the [`Builder`](Builder), and the future
     /// completes when the server has been shutdown.
-    pub struct QuicServer <S, IO> {
+    pub struct QuicServer <S> {
         #[pin]
         incoming: Incoming,
         #[pin]
         make_service: S,
         #[pin]
         state: State,
-        _io: PhantomData<fn() -> IO>,
     }
 }
 
@@ -68,7 +67,7 @@ pin_project! {
     }
 }
 
-impl QuicServer<(), ()> {
+impl QuicServer<()> {
     /// Starts a [`Builder`](Builder) with the provided incoming stream.
     pub fn builder(incoming: Incoming) -> QuicBuilder {
         QuicBuilder { incoming }
@@ -94,13 +93,13 @@ impl QuicServer<(), ()> {
     }
 }
 
-impl<S, B, IO> QuicServer<S, IO>
+impl<S, B> QuicServer<S>
 where
-    S: MakeServiceRef<ServerIo<IO>, Body, ResBody = B>,
+    S: MakeServiceRef<(), Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     B: HttpBody + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    IO: Connected,
+    // IO: Connected,
 {
     fn poll_next_(
         self: Pin<&mut Self>,
@@ -219,13 +218,13 @@ where
     }
 }
 
-impl<S, B, IO> Future for QuicServer<S, IO>
+impl<S, B> Future for QuicServer<S>
 where
-    S: MakeServiceRef<ServerIo<IO>, Body, ResBody = B>,
+    S: MakeServiceRef<(), Body, ResBody = B>,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
     B: HttpBody + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    IO: Connected,
+    // IO: Connected,
 {
     type Output = crate::Result<()>;
 
@@ -250,10 +249,9 @@ impl QuicBuilder {
 
     /// Consume this `QuicBuilder`, creating a [`QuicServer`](QuicServer).
     ///
-    pub fn serve<S, B, IO>(self, make_service: S) -> QuicServer<S, IO>
+    pub fn serve<S, B>(self, make_service: S) -> QuicServer<S>
     where
-        IO: Connected,
-        S: MakeServiceRef<ServerIo<IO>, Body, ResBody = B>,
+        S: MakeServiceRef<(), Body, ResBody = B>,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         B: HttpBody + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -262,7 +260,7 @@ impl QuicBuilder {
             incoming: self.incoming,
             make_service,
             state: State::Idle,
-            _io: PhantomData,
+            // _io: PhantomData,
         }
     }
 }
@@ -289,12 +287,12 @@ pub trait MakeServiceRef<Target, ReqBody>: sealed::Sealed<(Target, ReqBody)> {
 
     fn poll_ready_ref(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::MakeError>>;
 
-    fn make_service_ref(&mut self, target: &Target) -> Self::Future;
+    fn make_service_ref(&mut self, target: Target) -> Self::Future;
 }
 
 impl<T, Target, E, ME, S, F, IB, OB> MakeServiceRef<Target, IB> for T
 where
-    T: for<'a> Service<&'a Target, Error = ME, Response = S, Future = F>,
+    T: Service<Target, Error = ME, Response = S, Future = F>,
     E: Into<Box<dyn StdError + Send + Sync>>,
     ME: Into<Box<dyn StdError + Send + Sync>>,
     S: HttpService<IB, ResBody = OB, Error = E>,
@@ -314,14 +312,14 @@ where
         self.poll_ready(cx)
     }
 
-    fn make_service_ref(&mut self, target: &Target) -> Self::Future {
+    fn make_service_ref(&mut self, target: Target) -> Self::Future {
         self.call(target)
     }
 }
 
 impl<T, Target, S, B1, B2> sealed::Sealed<(Target, B1)> for T
 where
-    T: for<'a> Service<&'a Target, Response = S>,
+    T: Service<Target, Response = S>,
     S: HttpService<B1, ResBody = B2>,
     B1: HttpBody,
     B2: HttpBody,

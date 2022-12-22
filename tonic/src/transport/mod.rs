@@ -99,7 +99,7 @@ mod tls;
 pub use self::channel::{Channel, Endpoint};
 pub use self::error::Error;
 #[doc(inline)]
-pub use self::server::{NamedService, Server};
+pub use self::server::{NamedService, NewServer, QuicServer, Server};
 #[doc(inline)]
 pub use self::service::grpc_timeout::TimeoutExpired;
 pub use self::tls::Certificate;

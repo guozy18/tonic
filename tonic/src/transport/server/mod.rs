@@ -15,6 +15,7 @@ mod unix;
 pub use super::service::Routes;
 pub use crate::server::NamedService;
 pub use conn::{Connected, TcpConnectInfo};
+pub use new_server::NewServer;
 pub use quicserver::QuicServer;
 #[cfg(feature = "tls")]
 pub use tls::ServerTlsConfig;

@@ -1,35 +1,81 @@
-use super::{MakeSvc, Routes};
+// use super::{MakeSvc, Routes};
+use super::{recover_error::RecoverError, Routes};
 pub use crate::server::NamedService;
 
-use super::conn::Connected;
-use crate::body::BoxBody;
+use crate::{body::BoxBody, transport::service::GrpcTimeout};
 use bytes::Bytes;
-use futures_core::Stream;
+use futures_util::{future, ready};
 use http::{Request, Response};
+use http_body::Body as HttpBody;
 use hyper::Body;
+use pin_project::pin_project;
+use quinn::Incoming;
 use rustls::{Certificate, PrivateKey};
 use std::{
-    convert::Infallible, fmt, future::Future, marker::PhantomData, net::SocketAddr, path::PathBuf,
-    sync::Arc, time::Duration,
+    convert::Infallible,
+    fmt,
+    future::Future,
+    net::SocketAddr,
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
 };
-use tokio::{
-    fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
-};
+use tokio::{fs::File, io::AsyncReadExt};
 use tower::{
     layer::util::{Identity, Stack},
     layer::Layer,
+    limit::ConcurrencyLimitLayer,
     Service, ServiceBuilder,
 };
 // new import
 use super::QuicServer;
 
 type BoxHttpBody = http_body::combinators::UnsyncBoxBody<Bytes, crate::Error>;
-type BoxService =
-    tower::util::BoxService<Request<BoxHttpBody>, Response<BoxHttpBody>, crate::Error>;
+type BoxService = tower::util::BoxService<Request<Body>, Response<BoxHttpBody>, crate::Error>;
 type TraceInterceptor = Arc<dyn Fn(&http::Request<()>) -> tracing::Span + Send + Sync + 'static>;
 
-const DEFAULT_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 20;
+static ALPN: &[u8] = b"h3";
+
+async fn load_crypto() -> Result<rustls::ServerConfig, Box<dyn std::error::Error>> {
+    let cert: Option<PathBuf> = None;
+    let key: Option<PathBuf> = None;
+    let (cert, key) = match (cert, key) {
+        (None, None) => build_certs(),
+        (Some(cert_path), Some(ref key_path)) => {
+            let mut cert_v = Vec::new();
+            let mut key_v = Vec::new();
+
+            let mut cert_f = File::open(cert_path).await?;
+            let mut key_f = File::open(key_path).await?;
+
+            cert_f.read_to_end(&mut cert_v).await?;
+            key_f.read_to_end(&mut key_v).await?;
+            (rustls::Certificate(cert_v), PrivateKey(key_v))
+        }
+        (_, _) => return Err("cert and key args are mutually dependant".into()),
+    };
+
+    let mut crypto = rustls::ServerConfig::builder()
+        .with_safe_default_cipher_suites()
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)?;
+    crypto.max_early_data_size = u32::MAX;
+    crypto.alpn_protocols = vec![ALPN.into()];
+
+    Ok(crypto)
+}
+
+pub(crate) fn build_certs() -> (Certificate, PrivateKey) {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let key = PrivateKey(cert.serialize_private_key_der());
+    let cert = Certificate(cert.serialize_der().unwrap());
+    (cert, key)
+}
 
 /// A default batteries included `transport` server.
 ///
@@ -57,6 +103,107 @@ pub struct NewRouter<L = Identity> {
 impl<L> NewRouter<L> {
     pub(crate) fn new(server: NewServer<L>, routes: Routes) -> Self {
         Self { server, routes }
+    }
+}
+
+impl<L> NewRouter<L> {
+    /// Add a new service to this router.
+    pub fn add_service<S>(mut self, svc: S) -> Self
+    where
+        S: Service<Request<Body>, Response = Response<BoxBody>, Error = Infallible>
+            + NamedService
+            + Clone
+            + Send
+            + 'static,
+        S::Future: Send + 'static,
+    {
+        self.routes = self.routes.add_service(svc);
+        self
+    }
+
+    /// Add a new optional service to this router.
+    ///
+    /// # Note
+    /// Even when the argument given is `None` this will capture *all* requests to this service name.
+    /// As a result, one cannot use this to toggle between two identically named implementations.
+    #[allow(clippy::type_complexity)]
+    pub fn add_optional_service<S>(mut self, svc: Option<S>) -> Self
+    where
+        S: Service<Request<Body>, Response = Response<BoxBody>, Error = Infallible>
+            + NamedService
+            + Clone
+            + Send
+            + 'static,
+        S::Future: Send + 'static,
+    {
+        if let Some(svc) = svc {
+            self.routes = self.routes.add_service(svc);
+        }
+        self
+    }
+
+    /// Consume this [`Server`] creating a future that will execute the server
+    /// on [tokio]'s default executor.
+    ///
+    /// [`Server`]: struct.Server.html
+    /// [tokio]: https://docs.rs/tokio
+    pub async fn serve<ResBody>(self, addr: SocketAddr) -> Result<(), super::Error>
+    where
+        L: Layer<Routes>,
+        L::Service: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
+        <<L as Layer<Routes>>::Service as Service<Request<Body>>>::Future: Send + 'static,
+        <<L as Layer<Routes>>::Service as Service<Request<Body>>>::Error: Into<crate::Error> + Send,
+        ResBody: http_body::Body<Data = Bytes> + Send + 'static,
+        ResBody::Error: Into<crate::Error>,
+    {
+        let crypto = load_crypto().await.unwrap();
+        let server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
+        let (endpoint, incoming) = h3_quinn::quinn::Endpoint::server(server_config, addr).unwrap();
+        self.server
+            .serve_with_shutdown::<_, future::Ready<()>, ResBody>(
+                self.routes.prepare(),
+                incoming,
+                None,
+            )
+            .await
+    }
+
+    /// Consume this [`Server`] creating a future that will execute the server on
+    /// the provided incoming stream of `AsyncRead + AsyncWrite`. Similar to
+    /// `serve_with_shutdown` this method will also take a signal future to
+    /// gracefully shutdown the server.
+    ///
+    /// [`Server`]: struct.Server.html
+    pub async fn serve_with_incoming_shutdown<F, ResBody>(
+        self,
+        incoming: Incoming,
+        signal: F,
+    ) -> Result<(), super::Error>
+    where
+        F: Future<Output = ()>,
+        L: Layer<Routes>,
+        L::Service: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
+        <<L as Layer<Routes>>::Service as Service<Request<Body>>>::Future: Send + 'static,
+        <<L as Layer<Routes>>::Service as Service<Request<Body>>>::Error: Into<crate::Error> + Send,
+        ResBody: http_body::Body<Data = Bytes> + Send + 'static,
+        ResBody::Error: Into<crate::Error>,
+    {
+        self.server
+            .serve_with_shutdown(self.routes.prepare(), incoming, Some(signal))
+            .await
+    }
+
+    /// Create a tower service out of a router.
+    pub fn into_service<ResBody>(self) -> L::Service
+    where
+        L: Layer<Routes>,
+        L::Service: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
+        <<L as Layer<Routes>>::Service as Service<Request<Body>>>::Future: Send + 'static,
+        <<L as Layer<Routes>>::Service as Service<Request<Body>>>::Error: Into<crate::Error> + Send,
+        ResBody: http_body::Body<Data = Bytes> + Send + 'static,
+        ResBody::Error: Into<crate::Error>,
+    {
+        self.server.service_builder.service(self.routes.prepare())
     }
 }
 
@@ -163,10 +310,11 @@ impl<L> NewServer<L> {
     }
 
     // current the signal only support None
-    pub(crate) async fn serve_with_shutdown<S, I, F, IO, IE, ResBody>(
+    // pub(crate) async fn serve_with_shutdown<S, I, F, IO, IE, ResBody>(
+    pub(crate) async fn serve_with_shutdown<S, F, ResBody>(
         self,
         svc: S,
-        incoming: I,
+        incoming: Incoming,
         signal: Option<F>,
     ) -> Result<(), super::Error>
     where
@@ -174,33 +322,33 @@ impl<L> NewServer<L> {
         L::Service: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
         <<L as Layer<S>>::Service as Service<Request<Body>>>::Future: Send + 'static,
         <<L as Layer<S>>::Service as Service<Request<Body>>>::Error: Into<crate::Error> + Send,
-        I: Stream<Item = Result<IO, IE>>,
-        IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
-        IO::ConnectInfo: Clone + Send + Sync + 'static,
-        IE: Into<crate::Error>,
+        // I: Stream<Item = Result<IO, IE>>,
+        // IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
+        // IO::ConnectInfo: Clone + Send + Sync + 'static,
+        // IE: Into<crate::Error>,
         F: Future<Output = ()>,
         ResBody: http_body::Body<Data = Bytes> + Send + 'static,
         ResBody::Error: Into<crate::Error>,
     {
         // my tmp define
-        let listen: SocketAddr = "127.0.0.1:4433".parse().unwrap();
+        // let listen: SocketAddr = "127.0.0.1:4433".parse().unwrap();
         let trace_interceptor = self.trace_interceptor.clone();
         let concurrency_limit = self.concurrency_limit;
         let timeout = self.timeout;
 
         let svc = self.service_builder.service(svc);
 
-        let crypto = load_crypto().await.unwrap();
-        let server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
-        let (endpoint, mut incoming) =
-            h3_quinn::quinn::Endpoint::server(server_config, listen).unwrap();
+        // let crypto = load_crypto().await.unwrap();
+        // let server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
+        // let (endpoint, mut incoming) =
+        //     h3_quinn::quinn::Endpoint::server(server_config, listen).unwrap();
 
-        let svc: MakeSvc<<L as Layer<S>>::Service, IO> = MakeSvc {
+        let svc = MakeSvc {
             inner: svc,
             concurrency_limit,
             timeout,
             trace_interceptor,
-            _io: PhantomData,
+            // _io: PhantomData,
         };
 
         // let incoming = accept::from_stream::<_, _, crate::Error>(tcp);
@@ -223,226 +371,125 @@ impl<L> fmt::Debug for NewServer<L> {
     }
 }
 
-static ALPN: &[u8] = b"h3";
+struct Svc<S> {
+    inner: S,
+    trace_interceptor: Option<TraceInterceptor>,
+}
 
-async fn load_crypto() -> Result<rustls::ServerConfig, Box<dyn std::error::Error>> {
-    let cert: Option<PathBuf> = None;
-    let key: Option<PathBuf> = None;
-    let (cert, key) = match (cert, key) {
-        (None, None) => build_certs(),
-        (Some(cert_path), Some(ref key_path)) => {
-            let mut cert_v = Vec::new();
-            let mut key_v = Vec::new();
+impl<S, ResBody> Service<Request<Body>> for Svc<S>
+where
+    S: Service<Request<Body>, Response = Response<ResBody>>,
+    S::Error: Into<crate::Error>,
+    ResBody: http_body::Body<Data = Bytes> + Send + 'static,
+    ResBody::Error: Into<crate::Error>,
+{
+    type Response = Response<BoxHttpBody>;
+    type Error = crate::Error;
+    type Future = SvcFuture<S::Future>;
 
-            let mut cert_f = File::open(cert_path).await?;
-            let mut key_f = File::open(key_path).await?;
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
 
-            cert_f.read_to_end(&mut cert_v).await?;
-            key_f.read_to_end(&mut key_v).await?;
-            (rustls::Certificate(cert_v), PrivateKey(key_v))
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
+        let span = if let Some(trace_interceptor) = &self.trace_interceptor {
+            let (parts, body) = req.into_parts();
+            let bodyless_request = Request::from_parts(parts, ());
+
+            let span = trace_interceptor(&bodyless_request);
+
+            let (parts, _) = bodyless_request.into_parts();
+            req = Request::from_parts(parts, body);
+
+            span
+        } else {
+            tracing::Span::none()
+        };
+
+        SvcFuture {
+            inner: self.inner.call(req),
+            span,
         }
-        (_, _) => return Err("cert and key args are mutually dependant".into()),
-    };
-
-    let mut crypto = rustls::ServerConfig::builder()
-        .with_safe_default_cipher_suites()
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert], key)?;
-    crypto.max_early_data_size = u32::MAX;
-    crypto.alpn_protocols = vec![ALPN.into()];
-
-    Ok(crypto)
+    }
 }
 
-pub fn build_certs() -> (Certificate, PrivateKey) {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = PrivateKey(cert.serialize_private_key_der());
-    let cert = Certificate(cert.serialize_der().unwrap());
-    (cert, key)
+#[pin_project]
+struct SvcFuture<F> {
+    #[pin]
+    inner: F,
+    span: tracing::Span,
 }
 
-// impl<E, S, IB, OB, IO> MakeServiceRef<IB> for MakeSvc<S, IO>
-// where
-//     E: Into<Box<dyn StdError + Send + Sync>>,
-//     S: HttpService<IB, ResBody = OB, Error = E>,
-//     IB: HttpBody,
-//     OB: HttpBody,
-//     IO: Connected,
-// {
-//     type Error = E;
-//     type Service = S;
-//     type ResBody = OB;
-//     type MakeError = crate::Error;
-//     type Future = dyn Future<Output = crate::Result<S>>;
+impl<F, E, ResBody> Future for SvcFuture<F>
+where
+    F: Future<Output = Result<Response<ResBody>, E>>,
+    E: Into<crate::Error>,
+    ResBody: http_body::Body<Data = Bytes> + Send + 'static,
+    ResBody::Error: Into<crate::Error>,
+{
+    type Output = Result<Response<BoxHttpBody>, crate::Error>;
 
-//     type __DontNameMe = super::quicserver::sealed::CantName;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let _guard = this.span.enter();
 
-//     fn poll_ready_ref(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::MakeError>> {
-//         self.poll_ready(cx)
-//     }
+        let response: Response<ResBody> = ready!(this.inner.poll(cx)).map_err(Into::into)?;
+        let response = response.map(|body| body.map_err(Into::into).boxed_unsync());
+        Poll::Ready(Ok(response))
+    }
+}
 
-//     fn make_service_ref(&mut self, target: &) -> Self::Future {
-//         self.call(target)
-//     }
-// }
+impl<S> fmt::Debug for Svc<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Svc").finish()
+    }
+}
 
-// impl<S, B1, B2, IO> super::quicserver::sealed::Sealed<B1> for MakeSvc<S, IO>
-// where
-//     // T: for<'a> Service<&'a Target, Response = S>,
-//     IO: Connected,
-//     S: HttpService<B1, ResBody = B2>,
-//     B1: HttpBody,
-//     B2: HttpBody,
-// {
-// }
+#[derive(Clone)]
+struct MakeSvc<S> {
+    concurrency_limit: Option<usize>,
+    timeout: Option<Duration>,
+    inner: S,
+    trace_interceptor: Option<TraceInterceptor>,
+}
 
-// struct Svc<S> {
-//     inner: S,
-//     trace_interceptor: Option<TraceInterceptor>,
-// }
+impl<S, ResBody> Service<()> for MakeSvc<S>
+where
+    S: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    S::Error: Into<crate::Error> + Send,
+    ResBody: http_body::Body<Data = Bytes> + Send + 'static,
+    ResBody::Error: Into<crate::Error>,
+{
+    type Response = BoxService;
+    type Error = crate::Error;
+    type Future = future::Ready<Result<Self::Response, Self::Error>>;
 
-// impl<S, ResBody> Service<Request<Body>> for Svc<S>
-// where
-//     S: Service<Request<Body>, Response = Response<ResBody>>,
-//     S::Error: Into<crate::Error>,
-//     ResBody: http_body::Body<Data = Bytes> + Send + 'static,
-//     ResBody::Error: Into<crate::Error>,
-// {
-//     type Response = Response<BoxHttpBody>;
-//     type Error = crate::Error;
-//     type Future = SvcFuture<S::Future>;
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Ok(()).into()
+    }
 
-//     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-//         self.inner.poll_ready(cx).map_err(Into::into)
-//     }
+    fn call(&mut self, io: ()) -> Self::Future {
+        // let conn_info = io.connect_info();
 
-//     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-//         let span = if let Some(trace_interceptor) = &self.trace_interceptor {
-//             let (parts, body) = req.into_parts();
-//             let bodyless_request = Request::from_parts(parts, ());
+        let svc = self.inner.clone();
+        let concurrency_limit = self.concurrency_limit;
+        let timeout = self.timeout;
+        let trace_interceptor = self.trace_interceptor.clone();
 
-//             let span = trace_interceptor(&bodyless_request);
+        let svc = ServiceBuilder::new()
+            .layer_fn(RecoverError::new)
+            .option_layer(concurrency_limit.map(ConcurrencyLimitLayer::new))
+            .layer_fn(|s| GrpcTimeout::new(s, timeout))
+            .service(svc);
 
-//             let (parts, _) = bodyless_request.into_parts();
-//             req = Request::from_parts(parts, body);
+        let svc = ServiceBuilder::new()
+            .layer(BoxService::layer())
+            .service(Svc {
+                inner: svc,
+                trace_interceptor,
+            });
 
-//             span
-//         } else {
-//             tracing::Span::none()
-//         };
-
-//         SvcFuture {
-//             inner: self.inner.call(req),
-//             span,
-//         }
-//     }
-// }
-
-// #[pin_project]
-// struct SvcFuture<F> {
-//     #[pin]
-//     inner: F,
-//     span: tracing::Span,
-// }
-
-// impl<F, E, ResBody> Future for SvcFuture<F>
-// where
-//     F: Future<Output = Result<Response<ResBody>, E>>,
-//     E: Into<crate::Error>,
-//     ResBody: http_body::Body<Data = Bytes> + Send + 'static,
-//     ResBody::Error: Into<crate::Error>,
-// {
-//     type Output = Result<Response<BoxHttpBody>, crate::Error>;
-
-//     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-//         let this = self.project();
-//         let _guard = this.span.enter();
-
-//         let response: Response<ResBody> = ready!(this.inner.poll(cx)).map_err(Into::into)?;
-//         let response = response.map(|body| body.map_err(Into::into).boxed_unsync());
-//         Poll::Ready(Ok(response))
-//     }
-// }
-
-// impl<S> fmt::Debug for Svc<S> {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         f.debug_struct("Svc").finish()
-//     }
-// }
-
-// #[derive(Clone)]
-// struct MakeSvc<S, IO> {
-//     concurrency_limit: Option<usize>,
-//     timeout: Option<Duration>,
-//     inner: S,
-//     trace_interceptor: Option<TraceInterceptor>,
-//     _io: PhantomData<fn() -> IO>,
-// }
-
-// impl<S, ResBody, IO> Service<ServerIo<IO>> for MakeSvc<S, IO>
-// where
-//     IO: Connected,
-//     S: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
-//     S::Future: Send + 'static,
-//     S::Error: Into<crate::Error> + Send,
-//     ResBody: http_body::Body<Data = Bytes> + Send + 'static,
-//     ResBody::Error: Into<crate::Error>,
-// {
-//     type Response = BoxService;
-//     type Error = crate::Error;
-//     type Future = future::Ready<Result<Self::Response, Self::Error>>;
-
-//     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-//         Ok(()).into()
-//     }
-
-//     fn call(&mut self, io: ServerIo<IO>) -> Self::Future {
-//         let conn_info = io.connect_info();
-
-//         let svc = self.inner.clone();
-//         let concurrency_limit = self.concurrency_limit;
-//         let timeout = self.timeout;
-//         let trace_interceptor = self.trace_interceptor.clone();
-
-//         let svc = ServiceBuilder::new()
-//             .layer_fn(RecoverError::new)
-//             .option_layer(concurrency_limit.map(ConcurrencyLimitLayer::new))
-//             .layer_fn(|s| GrpcTimeout::new(s, timeout))
-//             .service(svc);
-
-//         let svc = ServiceBuilder::new()
-//             .layer(BoxService::layer())
-//             .map_request(move |mut request: Request<Body>| {
-//                 match &conn_info {
-//                     tower::util::Either::A(inner) => {
-//                         request.extensions_mut().insert(inner.clone());
-//                     }
-//                     tower::util::Either::B(inner) => {
-//                         #[cfg(feature = "tls")]
-//                         {
-//                             request.extensions_mut().insert(inner.clone());
-//                             request.extensions_mut().insert(inner.get_ref().clone());
-//                         }
-
-//                         #[cfg(not(feature = "tls"))]
-//                         {
-//                             // just a type check to make sure we didn't forget to
-//                             // insert this into the extensions
-//                             let _: &() = inner;
-//                         }
-//                     }
-//                 }
-
-//                 request
-//             })
-//             .service(Svc {
-//                 inner: svc,
-//                 trace_interceptor,
-//             });
-
-//         future::ready(Ok(svc))
-//     }
-// }
+        future::ready(Ok(svc))
+    }
+}
