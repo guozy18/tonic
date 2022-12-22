@@ -2,10 +2,11 @@ use super::super::BoxFuture;
 use super::quic_http::Http3Connector;
 use super::{grpc_timeout::GrpcTimeout, reconnect::Reconnect, AddOrigin, UserAgent};
 use crate::{body::BoxBody, transport::Endpoint};
-use h3::quic::OpenStreams;
 use http::Uri;
+use h3::quic::Connection as QuicConnection;
 use hyper::client::connect::Connection as HyperConnection;
 // use hyper::client::service::Connect as HyperConnect;
+
 use std::{
     fmt,
     task::{Context, Poll},
@@ -33,7 +34,7 @@ impl Connection {
         C: Service<Uri> + Send + 'static,
         C::Error: Into<crate::Error> + Send,
         C::Future: Unpin + Send,
-        C::Response: AsyncRead + AsyncWrite + HyperConnection + Unpin + Send + 'static,
+        C::Response: AsyncRead + AsyncWrite + QuicConnection<Bytes> + HyperConnection + Unpin + Send + 'static,
     {
         let stack = ServiceBuilder::new()
             .layer_fn(|s| {
@@ -47,7 +48,7 @@ impl Connection {
             .into_inner();
 
         // let connector = HyperConnect::new(connector, settings);
-        let connector: Http3Connector<C, h3_quinn::OpenStreams, h3_quinn::Connection> = Http3Connector::new(connector);
+        let connector: Http3Connector<C, h3_quinn::Connection> = Http3Connector::new(connector);
         let conn = Reconnect::new(connector, endpoint.uri.clone(), is_lazy);
         let inner = stack.layer(conn);
 
@@ -61,7 +62,7 @@ impl Connection {
         C: Service<Uri> + Send + 'static,
         C::Error: Into<crate::Error> + Send,
         C::Future: Unpin + Send,
-        C::Response: AsyncRead + AsyncWrite + HyperConnection + Unpin + Send + 'static,
+        C::Response: AsyncRead + AsyncWrite + QuicConnection<Bytes> + HyperConnection + Unpin + Send + 'static,
     {
         Self::new(connector, endpoint, false).ready_oneshot().await
     }
@@ -71,7 +72,7 @@ impl Connection {
         C: Service<Uri> + Send + 'static,
         C::Error: Into<crate::Error> + Send,
         C::Future: Unpin + Send,
-        C::Response: AsyncRead + AsyncWrite + HyperConnection + Unpin + Send + 'static,
+        C::Response: AsyncRead + AsyncWrite + QuicConnection<Bytes> + HyperConnection + Unpin + Send + 'static,
     {
         Self::new(connector, endpoint, true)
     }

@@ -3,7 +3,7 @@ use crate::{
     transport::NamedService,
 };
 use http::{Request, Response};
-use hyper::Body;
+use hyper::body::Body;
 use pin_project::pin_project;
 use std::{
     convert::Infallible,

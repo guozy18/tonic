@@ -20,7 +20,6 @@ use std::{
     time::Duration,
 };
 use tower::make::MakeConnection;
-// use crate::transport::E
 
 /// Channel builder.
 ///

@@ -1,21 +1,29 @@
 use bytes::Bytes;
 use futures_core::Future;
-use h3::client::{Connection as H3Connection, SendRequest as H3SendRequest};
-use h3::quic::{Connection as QuicConnection, OpenStreams};
+use h3::quic::Connection as QuicConnection;
 use http::{Request, Response};
+use http_body::combinators::UnsyncBoxBody;
 use http_body::Body as HttpBody;
 use hyper::Body;
+use hyper::rt::Executor;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::sync::mpsc;
 use tower::make::MakeConnection;
 use tower::Service;
 
-pub(crate) struct Http3Connector<M, O, C> {
+use crate::Status;
+
+use super::executor;
+
+pub(crate) struct Http3Connector<M, C> {
     inner: M,
-    _marker: PhantomData<fn(O, C)>,
+    _marker: PhantomData<C>,
 }
 
-impl<M, O, C> Http3Connector<M, O, C> {
+impl<M, C> Http3Connector<M, C> {
     pub(crate) fn new(inner: M) -> Self {
         Self {
             inner,
@@ -24,34 +32,23 @@ impl<M, O, C> Http3Connector<M, O, C> {
     }
 }
 
-pub(crate) struct SendRequest<O, C>
-where
-    C: QuicConnection<Bytes>,
-    O: OpenStreams<Bytes>,
-{
-    conn: H3Connection<C, Bytes>,
-    sr: H3SendRequest<O, Bytes>,
-}
+pub(crate) struct SendRequest<T>(mpsc::UnboundedSender<T>);
 
-impl<M, T, O, C> Service<T> for Http3Connector<M, O, C>
+impl<M, T, C> Service<T> for Http3Connector<M, C>
 where
-    M: MakeConnection<T> + Send,
+    M: MakeConnection<T, Connection = C> + Send,
     M::Connection: Unpin + Send + 'static,
     M::Future: Send + 'static,
     M::Error: Into<crate::Error> + Send,
     T: Send,
     C: QuicConnection<Bytes> + Send,
-    O: OpenStreams<Bytes> + Send,
 {
-    type Response = SendRequest<O, C>;
+    type Response = SendRequest<Request<UnsyncBoxBody<Bytes, Status>>>;
     type Error = crate::Error;
     type Future =
         Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
@@ -59,32 +56,39 @@ where
         let make_conn = self.inner.make_connection(req);
         Box::pin(async move {
             let conn = make_conn.await.map_err(Into::into)?;
-            // let (conn, sr) = h3::client::new(conn).await.map_err(Into::into)?;
-            // Ok(SendRequest { conn, sr })
-            todo!()
+            let (_conn, sr) = h3::client::new(conn).await.map_err(Box::new)?;
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            executor::SharedExec::tokio().execute(Box::pin(async move {
+                if let Some(data) = rx.recv().await {
+                    // TODO send request
+                }
+            }));
+            Ok(SendRequest(tx))
         })
     }
 }
 
-impl<C, O, HB> Service<Request<HB>> for SendRequest<O, C>
+impl<T> Clone for SendRequest<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<HB> Service<Request<HB>> for SendRequest<Request<HB>>
 where
-    HB: HttpBody + 'static,
-    C: QuicConnection<Bytes>,
-    O: OpenStreams<Bytes>,
+    HB: HttpBody + 'static + Send + Debug,
 {
     type Response = Response<Body>;
     type Error = crate::Error;
     type Future =
         Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        todo!()
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, req: Request<HB>) -> Self::Future {
-        todo!()
+        self.0.send(req).unwrap();
+        Box::pin(async move { todo!() })
     }
 }

@@ -2,22 +2,7 @@
 name = "hyper"
 version = "0.14.23"
 description = "A fast and correct HTTP library."
-readme = "README.md"
-homepage = "https://hyper.rs"
-documentation = "https://docs.rs/hyper"
-repository = "https://github.com/hyperium/hyper"
-license = "MIT"
 authors = ["Sean McArthur <sean@seanmonstar.com>"]
-keywords = ["http", "hyper", "hyperium"]
-categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
-edition = "2018"
-
-include = [
-  "Cargo.toml",
-  "LICENSE",
-  "src/**/*",
-  #"build.rs",
-]
 
 [dependencies]
 bytes = "1"
@@ -203,12 +188,10 @@ name = "upgrades"
 path = "examples/upgrades.rs"
 required-features = ["full"]
 
-
 [[example]]
 name = "web_api"
 path = "examples/web_api.rs"
 required-features = ["full"]
-
 
 [[bench]]
 name = "body"

@@ -1,15 +1,15 @@
 //! Client implementation of the HTTP/3 protocol
 
+use bytes::{Buf, Bytes, BytesMut};
+use futures_util::{future, Future};
+use http::{request, HeaderMap, Response};
+use http_body::Body as HttpBody;
 use std::{
     convert::TryFrom,
     marker::PhantomData,
     sync::{atomic::AtomicUsize, Arc},
     task::{Context, Poll, Waker},
 };
-
-use bytes::{Buf, Bytes, BytesMut};
-use futures_util::future;
-use http::{request, HeaderMap, Response};
 use tracing::{info, trace};
 
 use crate::{
@@ -138,15 +138,14 @@ where
     B: Buf,
 {
     /// Send a HTTP/3 request to the server
-    pub async fn send_request(
+    pub async fn send_request<HB: HttpBody + 'static + Send>(
         &mut self,
-        req: http::Request<()>,
+        req: http::Request<HB>,
     ) -> Result<RequestStream<T::BidiStream, B>, Error> {
         let (peer_max_field_section_size, closing) = {
             let state = self.conn_state.read("send request lock state");
             (state.peer_max_field_section_size, state.closing)
         };
-
         if closing.is_some() {
             return Err(Error::closing());
         }
@@ -203,7 +202,6 @@ where
                 self.send_grease_frame,
             ),
         };
-        // send the grease frame only once
         self.send_grease_frame = false;
         Ok(request_stream)
     }

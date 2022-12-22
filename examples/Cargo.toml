@@ -220,7 +220,7 @@ prost-types = "0.11"
 # Hyper example
 http = "0.2"
 http-body = "0.4.2"
-hyper = { version = "0.14", features = ["full"] }
+hyper = { path = "../hyper", features = ["full"] }
 pin-project = "1.0"
 warp = "0.3"
 # Health example

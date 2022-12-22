@@ -29,7 +29,6 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc::{channel, Sender},
 };
-
 use tower::balance::p2c::Balance;
 use tower::{
     buffer::{self, Buffer},
@@ -211,7 +210,6 @@ impl Service<http::Request<BoxBody>> for Channel {
 
     fn call(&mut self, request: http::Request<BoxBody>) -> Self::Future {
         let inner = Service::call(&mut self.svc, request);
-
         ResponseFuture { inner }
     }
 }
