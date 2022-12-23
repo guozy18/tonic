@@ -3,7 +3,7 @@
 mod conn;
 mod incoming;
 mod new_server;
-mod quicserver;
+mod quic_server;
 mod recover_error;
 mod service;
 #[cfg(feature = "tls")]
@@ -16,7 +16,7 @@ pub use super::service::Routes;
 pub use crate::server::NamedService;
 pub use conn::{Connected, TcpConnectInfo};
 pub use new_server::NewServer;
-pub use quicserver::QuicServer;
+pub use quic_server::QuicServer;
 #[cfg(feature = "tls")]
 pub use tls::ServerTlsConfig;
 

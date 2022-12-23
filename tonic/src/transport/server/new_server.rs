@@ -1,6 +1,6 @@
 // use super::{MakeSvc, Routes};
 use super::{recover_error::RecoverError, Routes};
-pub use crate::server::NamedService;
+use crate::server::NamedService;
 
 use crate::{body::BoxBody, transport::service::GrpcTimeout};
 use bytes::Bytes;
@@ -158,7 +158,7 @@ impl<L> NewRouter<L> {
     {
         let crypto = load_crypto().await.unwrap();
         let server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
-        let (endpoint, incoming) = h3_quinn::quinn::Endpoint::server(server_config, addr).unwrap();
+        let (_endpoint, incoming) = h3_quinn::quinn::Endpoint::server(server_config, addr).unwrap();
         self.server
             .serve_with_shutdown::<_, future::Ready<()>, ResBody>(
                 self.routes.prepare(),
@@ -322,40 +322,28 @@ impl<L> NewServer<L> {
         L::Service: Service<Request<Body>, Response = Response<ResBody>> + Clone + Send + 'static,
         <<L as Layer<S>>::Service as Service<Request<Body>>>::Future: Send + 'static,
         <<L as Layer<S>>::Service as Service<Request<Body>>>::Error: Into<crate::Error> + Send,
-        // I: Stream<Item = Result<IO, IE>>,
-        // IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
-        // IO::ConnectInfo: Clone + Send + Sync + 'static,
-        // IE: Into<crate::Error>,
         F: Future<Output = ()>,
         ResBody: http_body::Body<Data = Bytes> + Send + 'static,
         ResBody::Error: Into<crate::Error>,
     {
-        // my tmp define
-        // let listen: SocketAddr = "127.0.0.1:4433".parse().unwrap();
         let trace_interceptor = self.trace_interceptor.clone();
         let concurrency_limit = self.concurrency_limit;
         let timeout = self.timeout;
 
         let svc = self.service_builder.service(svc);
 
-        // let crypto = load_crypto().await.unwrap();
-        // let server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
-        // let (endpoint, mut incoming) =
-        //     h3_quinn::quinn::Endpoint::server(server_config, listen).unwrap();
-
         let svc = MakeSvc {
             inner: svc,
             concurrency_limit,
             timeout,
             trace_interceptor,
-            // _io: PhantomData,
         };
 
         // let incoming = accept::from_stream::<_, _, crate::Error>(tcp);
         // let server = hyper::Server::builder(incoming);
         let server = QuicServer::builder(incoming);
 
-        if let Some(signal) = signal {
+        if let Some(_signal) = signal {
             server.serve(svc).await.map_err(super::Error::from_source)?
         } else {
             server.serve(svc).await.map_err(super::Error::from_source)?;
@@ -469,9 +457,7 @@ where
         Ok(()).into()
     }
 
-    fn call(&mut self, io: ()) -> Self::Future {
-        // let conn_info = io.connect_info();
-
+    fn call(&mut self, _io: ()) -> Self::Future {
         let svc = self.inner.clone();
         let concurrency_limit = self.concurrency_limit;
         let timeout = self.timeout;
