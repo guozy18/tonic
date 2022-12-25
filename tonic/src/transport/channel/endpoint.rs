@@ -10,13 +10,14 @@ use crate::transport::{
 };
 use bytes::Bytes;
 use http::{uri::Uri, HeaderValue};
-use quinn::ClientConfig;
+use quinn::{ClientConfig, TransportConfig};
 use std::{
     convert::{TryFrom, TryInto},
     fmt,
     future::Future,
     pin::Pin,
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tower::make::MakeConnection;
@@ -35,8 +36,6 @@ pub struct Endpoint {
     #[cfg(feature = "tls")]
     pub(crate) tls: Option<TlsConnector>,
     pub(crate) buffer_size: Option<usize>,
-    pub(crate) init_stream_window_size: Option<u32>,
-    pub(crate) init_connection_window_size: Option<u32>,
     pub(crate) quic_version: Option<u32>,
     pub(crate) quic_max_concurrent_bidi_streams: Option<u32>,
     pub(crate) quic_max_concurrent_uni_streams: Option<u32>,
@@ -44,6 +43,7 @@ pub struct Endpoint {
     pub(crate) quic_receive_window: Option<u32>,
     pub(crate) quic_send_window: Option<u32>,
     pub(crate) quic_keep_alive_interval: Option<Duration>,
+    #[allow(dead_code)] // add timeout connector later
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) executor: SharedExec,
 }
@@ -282,29 +282,6 @@ impl Endpoint {
         }
     }
 
-    /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
-    /// stream-level flow control.
-    ///
-    /// Default is 65,535
-    ///
-    /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_INITIAL_WINDOW_SIZE
-    pub fn initial_stream_window_size(self, sz: impl Into<Option<u32>>) -> Self {
-        Endpoint {
-            init_stream_window_size: sz.into(),
-            ..self
-        }
-    }
-
-    /// Sets the max connection-level flow control for HTTP2
-    ///
-    /// Default is 65,535
-    pub fn initial_connection_window_size(self, sz: impl Into<Option<u32>>) -> Self {
-        Endpoint {
-            init_connection_window_size: sz.into(),
-            ..self
-        }
-    }
-
     /// Configures TLS for the endpoint.
     #[cfg(feature = "tls")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
@@ -336,6 +313,26 @@ impl Endpoint {
         if let Some(version) = self.quic_version {
             config.version(version);
         }
+
+        let mut transport_config = TransportConfig::default();
+        transport_config.keep_alive_interval(self.quic_keep_alive_interval);
+        if let Some(value) = self.quic_max_concurrent_bidi_streams {
+            transport_config.max_concurrent_bidi_streams(value.into());
+        }
+        if let Some(value) = self.quic_max_concurrent_uni_streams {
+            transport_config.max_concurrent_uni_streams(value.into());
+        }
+        if let Some(value) = self.quic_stream_receive_window {
+            transport_config.stream_receive_window(value.into());
+        }
+        if let Some(value) = self.quic_receive_window {
+            transport_config.receive_window(value.into());
+        }
+        if let Some(value) = self.quic_send_window {
+            transport_config.send_window(value.into());
+        }
+
+        config.transport = Arc::new(transport_config);
         let quic = QuicConnector::new(Some(config));
 
         #[cfg(feature = "tls")]
@@ -364,6 +361,26 @@ impl Endpoint {
         if let Some(version) = self.quic_version {
             config.version(version);
         }
+
+        let mut transport_config = TransportConfig::default();
+        transport_config.keep_alive_interval(self.quic_keep_alive_interval);
+        if let Some(value) = self.quic_max_concurrent_bidi_streams {
+            transport_config.max_concurrent_bidi_streams(value.into());
+        }
+        if let Some(value) = self.quic_max_concurrent_uni_streams {
+            transport_config.max_concurrent_uni_streams(value.into());
+        }
+        if let Some(value) = self.quic_stream_receive_window {
+            transport_config.stream_receive_window(value.into());
+        }
+        if let Some(value) = self.quic_receive_window {
+            transport_config.receive_window(value.into());
+        }
+        if let Some(value) = self.quic_send_window {
+            transport_config.send_window(value.into());
+        }
+
+        config.transport = Arc::new(transport_config);
         let quic = QuicConnector::new(Some(config));
 
         #[cfg(feature = "tls")]
@@ -463,8 +480,6 @@ impl From<Uri> for Endpoint {
             #[cfg(feature = "tls")]
             tls: None,
             buffer_size: None,
-            init_stream_window_size: None,
-            init_connection_window_size: None,
             quic_version: None,
             quic_max_concurrent_bidi_streams: None,
             quic_max_concurrent_uni_streams: None,

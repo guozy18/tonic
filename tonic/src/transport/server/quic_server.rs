@@ -1,16 +1,14 @@
+use super::service::HttpService;
+use bytes::Bytes;
+use futures::Future;
+use h3_quinn::NewConnection;
+use http::Request;
+use http_body::Body as HttpBody;
+use hyper::Body;
 use std::error::Error as StdError;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-
-use super::service::HttpService;
-use futures::Future;
-use h3_quinn::NewConnection;
-use http::{Request, StatusCode};
-use http_body::Body as HttpBody;
-use hyper::Body;
-// use hyper::server::conn::Http;
-use bytes::{Buf, Bytes, BytesMut};
 use tower::Service;
 use tracing::{debug, error};
 
@@ -155,14 +153,14 @@ where
 
                                     let resp = match resp {
                                         Ok(resp) => resp,
-                                        Err(err) => {
+                                        Err(_) => {
                                             return;
                                         }
                                     };
 
                                     // 在这里构建QUICServer的请求
                                     // !FIXME! todo!()
-                                    let (parts, body) = resp.into_parts();
+                                    let (parts, _body) = resp.into_parts();
                                     let resp = http::Response::from_parts(parts, ());
 
                                     match stream.send_response(resp).await {
@@ -193,7 +191,7 @@ where
                     ready!(server_fut.poll(cx));
                     return Poll::Ready(Ok(()));
                 }
-                StateProj::Connected { connection } => unreachable!(),
+                StateProj::Connected { connection: _ } => unreachable!(),
             }
         }
     }

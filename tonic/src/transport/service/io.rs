@@ -83,7 +83,7 @@ impl AsyncWrite for BoxedIo {
 }
 
 #[derive(Debug)]
-pub enum ServerIo<IO> {
+pub(crate) enum ServerIo<IO> {
     Io(IO),
     #[cfg(feature = "tls")]
     TlsIo(TlsStream<IO>),

@@ -10,7 +10,7 @@ use hyper::{rt::Executor, Body};
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::mem::{MaybeUninit};
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -98,8 +98,7 @@ where
                     let mut tx_holder = None;
 
                     while let Ok(mut b) =
-                        poll_fn(|cx| poll_frame(cx, &mut conn, &mut recv_buf))
-                            .await
+                        poll_fn(|cx| poll_frame(cx, &mut conn, &mut recv_buf)).await
                     {
                         if let Ok(frame) = Frame::decode(&mut b) {
                             match frame {
