@@ -2,9 +2,10 @@
 
 mod conn;
 mod incoming;
-mod myserver;
-mod quicserver;
+mod new_server;
+mod quic_server;
 mod recover_error;
+mod service;
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 mod tls;
@@ -14,7 +15,8 @@ mod unix;
 pub use super::service::Routes;
 pub use crate::server::NamedService;
 pub use conn::{Connected, TcpConnectInfo};
-pub use quicserver::QuicServer;
+pub use new_server::NewServer;
+pub use quic_server::QuicServer;
 #[cfg(feature = "tls")]
 pub use tls::ServerTlsConfig;
 
@@ -777,6 +779,7 @@ impl<S> fmt::Debug for Svc<S> {
     }
 }
 
+// #[derive(Clone)]
 struct MakeSvc<S, IO> {
     concurrency_limit: Option<usize>,
     timeout: Option<Duration>,
