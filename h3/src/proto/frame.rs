@@ -58,6 +58,12 @@ impl From<usize> for PayloadLen {
     }
 }
 
+impl Into<usize> for PayloadLen {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
 impl Frame<PayloadLen> {
     pub const MAX_ENCODED_SIZE: usize = VarInt::MAX_SIZE * 3;
 

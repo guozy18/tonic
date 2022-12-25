@@ -4,8 +4,6 @@ use super::{grpc_timeout::GrpcTimeout, reconnect::Reconnect, AddOrigin, UserAgen
 use crate::{body::BoxBody, transport::Endpoint};
 use http::Uri;
 use hyper::client::connect::Connection as HyperConnection;
-// use hyper::client::service::Connect as HyperConnect;
-use bytes::Bytes;
 
 use std::{
     fmt,
@@ -47,7 +45,7 @@ impl Connection {
             .option_layer(endpoint.rate_limit.map(|(l, d)| RateLimitLayer::new(l, d)))
             .into_inner();
 
-        let connector: Http3Connector<C> = Http3Connector::new(connector);
+        let connector: Http3Connector<C, BoxBody> = Http3Connector::new(connector);
         let conn = Reconnect::new(connector, endpoint.uri.clone(), is_lazy);
         let inner = stack.layer(conn);
 

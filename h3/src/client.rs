@@ -1,7 +1,7 @@
 //! Client implementation of the HTTP/3 protocol
 
 use bytes::{Buf, Bytes, BytesMut};
-use futures_util::{future, Future};
+use futures_util::future;
 use http::{request, HeaderMap, Response};
 use http_body::Body as HttpBody;
 use std::{
@@ -509,7 +509,6 @@ impl Builder {
     {
         let open = quic.opener();
         let conn_state = SharedStateRef::default();
-
         let conn_waker = Some(future::poll_fn(|cx| Poll::Ready(cx.waker().clone())).await);
 
         Ok((

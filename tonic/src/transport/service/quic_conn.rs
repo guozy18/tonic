@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use core::pin::Pin;
 use futures_core::{
     task::{Context, Poll},

@@ -1,10 +1,7 @@
 // use crate::transport::Server;
 use crate::transport::server::Connected;
-use bytes::Bytes;
 use hyper::client::connect::{Connected as HyperConnected, Connection};
-use std::borrow::BorrowMut;
 use std::io;
-use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -85,6 +82,7 @@ impl AsyncWrite for BoxedIo {
     }
 }
 
+#[derive(Debug)]
 pub enum ServerIo<IO> {
     Io(IO),
     #[cfg(feature = "tls")]
